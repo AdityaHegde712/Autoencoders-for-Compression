@@ -1,0 +1,16 @@
+# Core Machine Learning
+torch
+torchvision
+torchaudio
+pytorch-msssim
+
+# Computer Vision & Data
+opencv-python
+numpy
+pillow
+
+# Utilities
+tqdm
+matplotlib
+scipy
+natsort
