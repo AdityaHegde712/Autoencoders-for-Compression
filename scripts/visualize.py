@@ -82,7 +82,7 @@ def main():
             is_iframe = random.random() < IFRAME_PROB
             target    = f_curr if is_iframe else (f_curr - f_prev)
 
-            res_hat, _ = model(target, training=False)
+            res_hat, _, _ = model(target, training=False)
 
             # Reconstruct full frame
             if is_iframe:

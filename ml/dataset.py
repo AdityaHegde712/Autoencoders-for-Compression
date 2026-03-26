@@ -8,8 +8,45 @@ from torch.utils.data import Dataset, DataLoader
 import glob
 from natsort import natsorted
 
+DATA_PATH = r'c:\Users\hifia\Projects\Autoencoders-for-Compression\data\processed_frames'
+TRAIN_SPLIT    = 0.75
+VAL_SPLIT      = 0.15
+
+
 # Ensure the root project directory is in the PYTHONPATH
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+class RandomGlobalOrLocal(torch.nn.Module):
+    """
+    Custom transform that randomly switches between two strategies per sample:
+
+    - LOCAL  (1 - global_prob): RandomCrop(crop_size)
+        Teaches fine-grained texture and motion detail.
+
+    - GLOBAL (global_prob):     Resize((crop_size, crop_size))
+        Teaches the full spatial layout of the scene by squeezing the whole
+        frame down to the target size. Aspect ratio is slightly distorted
+        but global structure (roads, buildings, open areas) is preserved.
+
+    Both paths produce the same output shape, so they can be mixed freely
+    in the same DataLoader batch.
+    """
+    def __init__(self, crop_size: int, global_prob: float = 0.20):
+        super().__init__()
+        self.crop        = transforms.RandomCrop(crop_size)
+        self.resize      = transforms.Resize((crop_size, crop_size), antialias=True)
+        self.global_prob = global_prob
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if random.random() < self.global_prob:
+            return self.resize(x)   # Full-frame global view
+        return self.crop(x)         # Local detail crop
+
+    def __repr__(self):
+        return (f"RandomGlobalOrLocal(p_global={self.global_prob}, "
+                f"crop={self.crop.size}, global_prob={self.global_prob})")
+
 
 class ViratDataset(Dataset):
     def __init__(self, data_root, sequence_len=2, transform=None, video_folders=None, max_samples=None):
@@ -78,6 +115,41 @@ class ViratDataset(Dataset):
             return stacked
             
         return torch.stack(tensors)
+
+
+def get_dataloaders(
+    train_max_samples: int,
+    val_max_samples: int,
+    batch_size: int,
+    data_path: str = DATA_PATH,
+    sequence_len: int = 10,
+    global_prob: float = 0.20,
+):
+    all_folders = [f.path for f in os.scandir(data_path) if f.is_dir()]
+    random.seed(42)
+    random.shuffle(all_folders)
+
+    n = len(all_folders)
+    train_end = int(n * TRAIN_SPLIT)
+    val_end   = train_end + int(n * VAL_SPLIT)
+
+    train_folders = all_folders[:train_end]
+    val_folders   = all_folders[train_end:val_end]
+    # test_folders  = all_folders[val_end:]  # Reserved for final evaluation
+
+    print(f"Split: {len(train_folders)} train | {len(val_folders)} val | {n - val_end} test videos")
+
+    # RandomGlobalOrLocal: 80% local crop (detail), 20% global resize (scene layout)
+    transform = RandomGlobalOrLocal(crop_size=352, global_prob=global_prob)
+
+    train_dataset = ViratDataset(DATA_PATH, sequence_len=sequence_len, transform=transform, video_folders=train_folders, max_samples=train_max_samples)
+    val_dataset   = ViratDataset(DATA_PATH, sequence_len=sequence_len, transform=transform, video_folders=val_folders,   max_samples=val_max_samples)
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    val_loader   = DataLoader(val_dataset,   batch_size=batch_size, shuffle=False)
+
+    return train_loader, val_loader
+
 
 if __name__ == "__main__":
     # Test the dataset

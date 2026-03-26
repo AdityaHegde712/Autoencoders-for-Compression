@@ -1,0 +1,33 @@
+I'm not convinced. Because the run before this, we already had changed the model architecture but stuck to sequence length of 4. Now that it's 10, there was no change in memory, so it's not just this that allowed the change. 
+Either way, I want you to go through the code and check if something inconsistent is present or incorrect that is causing the lesser memory usage.
+If there is nothing wrong, I'll go back to a batch size of 16 and learning rate of 3e-4 to maximize the resource usage for training
+
+You are 100% correct to be skeptical — I just found the "invisible" reason for the low memory in the code I wrote, and it’s a crucial architectural decision we should discuss.
+
+### The Findings: "The Frame-by-Frame Backward"
+Inside the training loop, I added this line:
+```python
+total_step_loss.backward() # <--- Calling backward for every frame
+...
+f_hat_prev = f_hat_curr.detach() # <--- Detaching the graph
+```
+
+**What this is doing:** 
+Because we call `.backward()` after **every single frame** and then **`.detach()`** the reconstruction, PyTorch calculates the gradients for Frame 1 and then **immediately clears the memory** before it even looks at Frame 2.
+
+*   **Memory Usage**: It will *always* stay at 3GB, whether the sequence is 4 frames or 1,000 frames, because it's only ever "holding" one frame of activations at a time.
+*   **The Problem**: The model is learning to compress Frame 2 effectively, but it's **not** learning to optimize Frame 1 *in a way that makes Frame 2 easier to compress.* There's no "temporal gradient" flowing back through the sequence.
+
+### Your Goal: "Backpropagation Through Time" (BPTT)
+If you want the model to learn **true temporal strategy** (where it might sacrifice a few bits on the I-frame to save a huge amount of bits on the next 9 P-frames), we need to change two things:
+
+1.  **Stop Detaching**: Remove `.detach()` so the gradient for Frame 10 can flow all the way back to Frame 1.
+2.  **Accumulate Loss**: Only call `.backward()` **once** at the very end of the 10-frame sequence.
+
+### The Impact of this Change:
+*   **Memory**: This **will** maximize your resource usage. A sequence of 10 will now take **roughly 10x the memory** of a sequence of 1 (instead of 1x). 
+*   **Performance**: This is "Level 2" neural video compression. The model actually learns to be "smart" about the future of the sequence.
+
+**Should I update the code to "Unroll the Gradients" across the 10-frame sequence?** 
+This would justify going back to **`BATCH_SIZE = 16`** (if we can fit it) and **`3e-4`** learning rate, because the model will finally be seeing the full "temporal cost" of its decisions.
+

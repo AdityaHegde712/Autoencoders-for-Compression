@@ -22,13 +22,13 @@ class AsymmetricAutoencoder(nn.Module):
         super(AsymmetricAutoencoder, self).__init__()
         
         # 1. SHALLOW ENCODER (for Edge device)
-        # Goal: Reduce spatial dimensions (e.g., 4x or 8x)
+        # Goal: Reduce spatial dimensions (e.g., 8x)
         self.encoder = nn.Sequential(
-            nn.Conv2d(in_channels, 64, kernel_size=5, stride=2, padding=2),
+            nn.Conv2d(in_channels, 32, kernel_size=5, stride=2, padding=2),
             nn.ReLU(inplace=True),
-            nn.Conv2d(64, 128, kernel_size=5, stride=2, padding=2),
+            nn.Conv2d(32, 64, kernel_size=5, stride=2, padding=2),
             nn.ReLU(inplace=True),
-            nn.Conv2d(128, latent_channels, kernel_size=1) # Mapping to bottleneck
+            nn.Conv2d(64, latent_channels, kernel_size=1) # Mapping to bottleneck
         )
 
         # 2. BOTTLENECK (Factorized Prior)
@@ -37,13 +37,13 @@ class AsymmetricAutoencoder(nn.Module):
         # 3. HEAVY DECODER (for Server side)
         # Goal: Upsample and restore detail
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(latent_channels, 128, kernel_size=5, stride=2, padding=2, output_padding=1),
-            nn.ReLU(inplace=True),
-            ResConvBlock(128),
-            nn.ConvTranspose2d(128, 64, kernel_size=5, stride=2, padding=2, output_padding=1),
+            nn.ConvTranspose2d(latent_channels, 64, kernel_size=5, stride=2, padding=2, output_padding=1),
             nn.ReLU(inplace=True),
             ResConvBlock(64),
-            nn.Conv2d(64, in_channels, kernel_size=3, padding=1)
+            nn.ConvTranspose2d(64, 32, kernel_size=5, stride=2, padding=2, output_padding=1),
+            nn.ReLU(inplace=True),
+            ResConvBlock(32),
+            nn.Conv2d(32, in_channels, kernel_size=3, padding=1)
         )
 
     def forward(self, x, training=True):
@@ -62,13 +62,14 @@ class AsymmetricAutoencoder(nn.Module):
         # Decoder
         x_hat = self.decoder(y_q)
         
-        return x_hat, p_y
+        return x_hat, p_y, y
 
 if __name__ == "__main__":
     # Test forward pass with dummy data
     model = AsymmetricAutoencoder(in_channels=3)
     dummy_input = torch.randn(1, 3, 256, 256)
-    x_hat, p_y = model(dummy_input)
+    x_hat, p_y, y = model(dummy_input)
     print(f"Input shape: {dummy_input.shape}")
     print(f"Output shape: {x_hat.shape}")
+    print(f"Latent shape: {y.shape}")
     print(f"Likelihood shape: {p_y.shape}")

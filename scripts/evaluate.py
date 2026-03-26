@@ -59,7 +59,7 @@ def main():
     assert os.path.exists(model_path), f"Model not found: {model_path}"
 
     # ── load model ──────────────────────────────────────────────────────────
-    model = AsymmetricAutoencoder(in_channels=3, latent_channels=128).to(DEVICE)
+    model = AsymmetricAutoencoder(in_channels=3, latent_channels=64).to(DEVICE)
     model.load_state_dict(torch.load(model_path, map_location=DEVICE))
     model.eval()
     print(f"Loaded model from {model_path}")
@@ -81,7 +81,7 @@ def main():
             is_iframe = random.random() < IFRAME_PROB
             target    = f_curr if is_iframe else (f_curr - f_prev)
 
-            res_hat, p_y = model(target, training=False)
+            res_hat, p_y, _ = model(target, training=False)
 
             # Reconstruct the full frame for quality metrics
             if is_iframe:
