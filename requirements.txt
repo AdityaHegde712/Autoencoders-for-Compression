@@ -9,8 +9,10 @@ opencv-python
 numpy
 pillow
 
-# Utilities
-tqdm
+# Analysis & Visualization
 matplotlib
+scikit-learn
+pandas
+tqdm
 scipy
 natsort
