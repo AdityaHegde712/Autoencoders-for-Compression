@@ -286,6 +286,8 @@ def train():
 
         if epoch % 5 == 0:
             torch.save(model.state_dict(), f"{save_folder}/baseline_epoch_{epoch}.pth")
+        if os.path.exists(f"{save_folder}/baseline_epoch_{epoch-15}.pth"):
+            os.remove(f"{save_folder}/baseline_epoch_{epoch-15}.pth")
 
         n_train = len(train_loader)
         n_val   = len(val_loader)
