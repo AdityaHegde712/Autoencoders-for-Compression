@@ -1,7 +1,8 @@
 import cv2
 import os
 
-video_path = r'c:\Users\hifia\Projects\Autoencoders-for-Compression\data\virat_aerial_videos\09152008flight2tape1_1.mpg'
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+video_path = os.path.join(PROJECT_ROOT, 'data', 'virat_aerial_videos', '09152008flight2tape1_1.mpg')
 cap = cv2.VideoCapture(video_path)
 
 if not cap.isOpened():

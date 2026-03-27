@@ -25,7 +25,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ml.dataset import ViratDataset
 from ml.models.autoencoder import AsymmetricAutoencoder
 
-DATA_PATH   = r'c:\Users\hifia\Projects\Autoencoders-for-Compression\data\processed_frames'
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_PATH   = os.path.join(PROJECT_ROOT, 'data', 'processed_frames')
 TRAIN_SPLIT = 0.75
 VAL_SPLIT   = 0.15
 IFRAME_PROB = 0.10
