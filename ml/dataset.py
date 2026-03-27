@@ -7,8 +7,10 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader
 import glob
 from natsort import natsorted
+from torchvision import transforms
 
-DATA_PATH = r'c:\Users\hifia\Projects\Autoencoders-for-Compression\data\processed_frames'
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_PATH = os.path.join(PROJECT_ROOT, 'data', 'processed_frames')
 TRAIN_SPLIT    = 0.75
 VAL_SPLIT      = 0.15
 
@@ -153,7 +155,7 @@ def get_dataloaders(
 
 if __name__ == "__main__":
     # Test the dataset
-    processed_path = r'c:\Users\hifia\Projects\Autoencoders-for-Compression\data\processed_frames'
+    processed_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'processed_frames')
     if os.path.exists(processed_path):
         dataset = ViratDataset(processed_path)
         sample = dataset[0]

@@ -26,7 +26,8 @@ from ml.dataset import ViratDataset
 from ml.models.autoencoder import AsymmetricAutoencoder
 
 # ── replicate the train/val/test split ──────────────────────────────────────
-DATA_PATH   = r'c:\Users\hifia\Projects\Autoencoders-for-Compression\data\processed_frames'
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_PATH   = os.path.join(PROJECT_ROOT, 'data', 'processed_frames')
 TRAIN_SPLIT = 0.75
 VAL_SPLIT   = 0.15
 IFRAME_PROB = 0.10
@@ -58,7 +59,7 @@ def main():
     assert os.path.exists(model_path), f"Model not found: {model_path}"
 
     # ── load model ──────────────────────────────────────────────────────────
-    model = AsymmetricAutoencoder(in_channels=3, latent_channels=128).to(DEVICE)
+    model = AsymmetricAutoencoder(in_channels=3, latent_channels=64).to(DEVICE)
     model.load_state_dict(torch.load(model_path, map_location=DEVICE))
     model.eval()
 

@@ -19,7 +19,8 @@ from ml.dataset import ViratDataset, get_dataloaders
 from ml.models.autoencoder import AsymmetricAutoencoder
 
 # --- 1. CONFIGURATION ---
-DATA_PATH = r'c:\Users\hifia\Projects\Autoencoders-for-Compression\data\processed_frames'
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATA_PATH = os.path.join(PROJECT_ROOT, 'data', 'processed_frames')
 BATCH_SIZE     = 12         # Reduced because GOP=10 uses 10x more frames per step
 LEARNING_RATE  = 2.4e-4
 LAMBDA_BITRATE = 0.02      # Adjusted moderately for the 10-frame temporal window
