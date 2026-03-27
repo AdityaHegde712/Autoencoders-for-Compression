@@ -21,16 +21,16 @@ from ml.models.autoencoder import AsymmetricAutoencoder
 # --- 1. CONFIGURATION ---
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_PATH = os.path.join(PROJECT_ROOT, 'data', 'processed_frames')
-BATCH_SIZE     = 12         # Reduced because GOP=10 uses 10x more frames per step
-LEARNING_RATE  = 2.4e-4
+BATCH_SIZE     = 32         # Reduced because GOP=10 uses 10x more frames per step
+LEARNING_RATE  = 3e-4
 LAMBDA_BITRATE = 0.02      # Adjusted moderately for the 10-frame temporal window
-LATENT_CHANNELS = 64       # Slimmer bottleneck based on PCA of run *624 in ml/saved
+LATENT_CHANNELS = 32       # Slimmer bottleneck based on PCA of run *624 in ml/saved
 EPOCHS = 100
 DEVICE         = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # POC caps — set to None to use the full dataset
-TRAIN_MAX_SAMPLES = 375 * BATCH_SIZE  # 3,000 sequences
-VAL_MAX_SAMPLES   = 75  * BATCH_SIZE  # 600 sequences
+TRAIN_MAX_SAMPLES = 50_000  # 3,000 sequences
+VAL_MAX_SAMPLES   = 10_000  # 600 sequences
 PATIENCE    = 0.1 * EPOCHS
 IFRAME_PROB = 0.10  # This is now controlled by sequence_len (1 I-frame per 10 frames)
                     # Production target: 1/30 ≈ 0.033 (one I-frame per second at 30fps, GOP=30)
