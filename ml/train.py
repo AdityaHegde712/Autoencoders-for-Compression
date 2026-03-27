@@ -29,8 +29,8 @@ EPOCHS = 100
 DEVICE         = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # POC caps — set to None to use the full dataset
-TRAIN_MAX_SAMPLES = 50_000  # 3,000 sequences
-VAL_MAX_SAMPLES   = 10_000  # 600 sequences
+TRAIN_MAX_SAMPLES = 15_000  # 3,000 sequences
+VAL_MAX_SAMPLES   = 3_000  # 600 sequences
 PATIENCE    = 0.1 * EPOCHS
 IFRAME_PROB = 0.10  # This is now controlled by sequence_len (1 I-frame per 10 frames)
                     # Production target: 1/30 ≈ 0.033 (one I-frame per second at 30fps, GOP=30)
