@@ -24,11 +24,11 @@ class AsymmetricAutoencoder(nn.Module):
         # 1. SHALLOW ENCODER (for Edge device)
         # Goal: Reduce spatial dimensions (e.g., 8x)
         self.encoder = nn.Sequential(
-            nn.Conv2d(in_channels, 32, kernel_size=5, stride=2, padding=2),
+            nn.Conv2d(in_channels, 16, kernel_size=5, stride=2, padding=2),
             nn.ReLU(inplace=True),
-            nn.Conv2d(32, 64, kernel_size=5, stride=2, padding=2),
+            nn.Conv2d(16, 32, kernel_size=5, stride=2, padding=2),
             nn.ReLU(inplace=True),
-            nn.Conv2d(64, latent_channels, kernel_size=1) # Mapping to bottleneck
+            nn.Conv2d(32, latent_channels, kernel_size=1) # Mapping to bottleneck
         )
 
         # 2. BOTTLENECK (Factorized Prior)
@@ -37,13 +37,13 @@ class AsymmetricAutoencoder(nn.Module):
         # 3. HEAVY DECODER (for Server side)
         # Goal: Upsample and restore detail
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(latent_channels, 64, kernel_size=5, stride=2, padding=2, output_padding=1),
-            nn.ReLU(inplace=True),
-            ResConvBlock(64),
-            nn.ConvTranspose2d(64, 32, kernel_size=5, stride=2, padding=2, output_padding=1),
+            nn.ConvTranspose2d(latent_channels, 32, kernel_size=5, stride=2, padding=2, output_padding=1),
             nn.ReLU(inplace=True),
             ResConvBlock(32),
-            nn.Conv2d(32, in_channels, kernel_size=3, padding=1)
+            nn.ConvTranspose2d(32, 16, kernel_size=5, stride=2, padding=2, output_padding=1),
+            nn.ReLU(inplace=True),
+            ResConvBlock(16),
+            nn.Conv2d(16, in_channels, kernel_size=3, padding=1)
         )
 
     def forward(self, x, training=True):
