@@ -60,7 +60,7 @@ def main():
     assert os.path.exists(model_path), f"Model not found: {model_path}"
 
     # ── load model ──────────────────────────────────────────────────────────
-    model = AsymmetricAutoencoder(in_channels=3, latent_channels=64).to(DEVICE)
+    model = AsymmetricAutoencoder(in_channels=3, latent_channels=32).to(DEVICE)
     model.load_state_dict(torch.load(model_path, map_location=DEVICE))
     model.eval()
     print(f"Loaded model from {model_path}")

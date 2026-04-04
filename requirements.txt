@@ -11,6 +11,7 @@ pillow
 
 # Analysis & Visualization
 matplotlib
+thop
 scikit-learn
 pandas
 tqdm

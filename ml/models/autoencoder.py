@@ -2,6 +2,26 @@ import torch
 import torch.nn as nn
 from ml.models.entropy import FactorizedBottleneck
 
+
+class DepthwiseSeparableConv(nn.Module):
+    """
+    Depthwise + pointwise factorization of a standard Conv2d.
+    Reduces MACs from (K² · Cin · Cout · H · W) to (K² · Cin · H · W) + (Cin · Cout · H · W).
+    Used in the encoder to minimise compute on the edge device.
+    """
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0):
+        super().__init__()
+        self.depthwise = nn.Conv2d(
+            in_channels, in_channels,
+            kernel_size=kernel_size, stride=stride,
+            padding=padding, groups=in_channels, bias=False
+        )
+        self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+
+    def forward(self, x):
+        return self.pointwise(self.depthwise(x))
+
+
 class ResConvBlock(nn.Module):
     """ Residual Convolutional Block for the Heavy Decoder """
     def __init__(self, channels):
@@ -17,18 +37,19 @@ class ResConvBlock(nn.Module):
         out = self.conv2(out)
         return out + residual
 
+
 class AsymmetricAutoencoder(nn.Module):
     def __init__(self, in_channels=3, latent_channels=128):
         super(AsymmetricAutoencoder, self).__init__()
         
         # 1. SHALLOW ENCODER (for Edge device)
-        # Goal: Reduce spatial dimensions (e.g., 8x)
+        # Uses depthwise separable convolutions to minimise MACs
         self.encoder = nn.Sequential(
-            nn.Conv2d(in_channels, 16, kernel_size=5, stride=2, padding=2),
+            DepthwiseSeparableConv(in_channels, 16, kernel_size=5, stride=2, padding=2),
             nn.ReLU(inplace=True),
-            nn.Conv2d(16, 32, kernel_size=5, stride=2, padding=2),
+            DepthwiseSeparableConv(16, 32, kernel_size=5, stride=2, padding=2),
             nn.ReLU(inplace=True),
-            nn.Conv2d(32, latent_channels, kernel_size=1) # Mapping to bottleneck
+            nn.Conv2d(32, latent_channels, kernel_size=1)  # 1x1 is already pointwise
         )
 
         # 2. BOTTLENECK (Factorized Prior)
