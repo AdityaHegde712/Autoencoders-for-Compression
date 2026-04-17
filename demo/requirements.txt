@@ -1,0 +1,13 @@
+# Core ML Framework
+torch
+torchvision
+
+# Computer Vision & Image Processing
+opencv-python
+numpy
+
+# Streaming & Infrastructure
+confluent-kafka
+
+# Utilities (Optional but recommended for the demo)
+tqdm
