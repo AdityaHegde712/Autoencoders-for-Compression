@@ -17,7 +17,7 @@ import math
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from pytorch_msssim import ssim as calc_ssim
+from pytorch_msssim import ssim as calc_ssim, ms_ssim as calc_msssim
 from tqdm import tqdm
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -60,7 +60,7 @@ def main():
     assert os.path.exists(model_path), f"Model not found: {model_path}"
 
     # ── load model ──────────────────────────────────────────────────────────
-    model = AsymmetricAutoencoder(in_channels=3, latent_channels=64).to(DEVICE)
+    model = AsymmetricAutoencoder(in_channels=3, latent_channels=32).to(DEVICE)
     model.load_state_dict(torch.load(model_path, map_location=DEVICE))
     model.eval()
     print(f"Loaded model from {model_path}")
@@ -71,7 +71,7 @@ def main():
     loader       = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
     print(f"Test set: {len(test_folders)} videos, {len(dataset)} sequences, {len(loader)} batches")
 
-    total_psnr, total_ssim, total_bpp = 0.0, 0.0, 0.0
+    total_psnr, total_ssim, total_msssim, total_bpp = 0.0, 0.0, 0.0, 0.0
     n_batches = 0
 
     with torch.no_grad():
@@ -96,22 +96,27 @@ def main():
             # SSIM vs original full frame (full resolution)
             batch_ssim = calc_ssim(f_hat, f_curr, data_range=1.0, size_average=True).item()
 
+            # MS-SSIM vs original full frame (full resolution)
+            batch_msssim = calc_msssim(f_hat, f_curr, data_range=1.0, size_average=True).item()
             # BPP estimate
             num_pixels = f_curr.shape[0] * f_curr.shape[2] * f_curr.shape[3]
             batch_bpp  = (-torch.sum(torch.log2(p_y + 1e-6)) / num_pixels).item()
 
             total_psnr += batch_psnr
             total_ssim += batch_ssim
+            total_msssim += batch_msssim
             total_bpp  += batch_bpp
             n_batches  += 1
 
     avg_psnr = total_psnr / n_batches
     avg_ssim = total_ssim / n_batches
+    avg_msssim = total_msssim / n_batches
     avg_bpp  = total_bpp  / n_batches
 
     print("\n" + "=" * 40)
     print(f"  PSNR :  {avg_psnr:.2f} dB")
     print(f"  SSIM :  {avg_ssim:.4f}")
+    print(f"  MS-SSIM :  {avg_msssim:.4f}")
     print(f"  BPP  :  {avg_bpp:.4f}")
     print("=" * 40)
 
@@ -120,6 +125,7 @@ def main():
     with open(out_path, "w") as f:
         f.write(f"PSNR: {avg_psnr:.4f} dB\n")
         f.write(f"SSIM: {avg_ssim:.6f}\n")
+        f.write(f"MS-SSIM: {avg_msssim:.6f}\n")
         f.write(f"BPP:  {avg_bpp:.6f}\n")
     print(f"Results saved to {out_path}")
 
