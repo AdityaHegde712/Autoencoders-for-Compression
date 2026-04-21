@@ -12,13 +12,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ml.models.autoencoder import AsymmetricAutoencoder
+from ml.utils.device import get_device, maybe_compile
 from scripts.live_demo import postprocess
 
 # --- CONFIG ---
 KAFKA_BROKER = 'localhost:9092'
 TOPIC = 'ai-compressed-video'
 CHECKPOINT = "../ml/models/saved/best_model.pth"
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE = get_device()
 
 RESOLUTION_W = 640
 RESOLUTION_H = 480
@@ -54,9 +55,9 @@ def unpackage_frame(packet):
 
 # 1. Load Model (Decoder only needed, but loading full is easier)
 model = AsymmetricAutoencoder(in_channels=3, latent_channels=64).to(DEVICE)
-model.load_state_dict(torch.load(CHECKPOINT, map_location=DEVICE))
+model.load_state_dict(torch.load(CHECKPOINT, map_location=DEVICE, weights_only=True))
 model.eval()
-decoder = torch.compile(model.decoder)
+decoder = maybe_compile(model.decoder, DEVICE)
 
 c = Consumer({
     'bootstrap.servers': KAFKA_BROKER,
@@ -68,7 +69,7 @@ c.subscribe([TOPIC])
 print("Consumer started. Decompressing latent tensors...")
 
 try:
-    with torch.no_grad():
+    with torch.inference_mode():
         frame_count = 0
         iteration_times = []
         deser_times = []
@@ -86,7 +87,9 @@ try:
 
             # 2. Deserialization
             deser_start = time.time()
-            latent_q = bitstream_to_tensor(package['bitstream'],package['shape'])
+            latent_q = bitstream_to_tensor(package["bitstream"], package["shape"]).to(
+                DEVICE, non_blocking=DEVICE.type == "cuda"
+            )
             deser_time = time.time() - deser_start
             
             #latent_q = package["latent"].to(DEVICE)

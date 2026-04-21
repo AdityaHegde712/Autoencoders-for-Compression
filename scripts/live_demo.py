@@ -26,6 +26,7 @@ import torch
 # Allow imports from project root
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from ml.models.autoencoder import AsymmetricAutoencoder
+from ml.utils.device import get_device, synchronize
 
 # ── defaults ────────────────────────────────────────────────────────────────
 DEFAULT_CHECKPOINT = "ml/models/saved/run_01/best_model.pth"
@@ -96,12 +97,7 @@ def main():
     args = parser.parse_args()
 
     # ── device ──────────────────────────────────────────────────────────
-    if torch.backends.mps.is_available():
-        device = torch.device("mps")
-    elif torch.cuda.is_available():
-        device = torch.device("cuda")
-    else:
-        device = torch.device("cpu")
+    device = get_device()
     print(f"Using device: {device}")
 
     # ── model ───────────────────────────────────────────────────────────
@@ -146,20 +142,14 @@ def main():
             tensor_padded, orig_h, orig_w = pad_to_multiple(tensor, multiple=4)
             y = model.encoder(tensor_padded)
             y_q, _ = model.bottleneck(y, training=False)
-            if device.type == "mps":
-                torch.mps.synchronize()
-            elif device.type == "cuda":
-                torch.cuda.synchronize()
+            synchronize(device)
             t_encode = time.perf_counter()
 
             # ── decode ──────────────────────────────────────────────
             x_hat = model.decoder(y_q)
             # crop padding back
             x_hat = x_hat[:, :, :orig_h, :orig_w]
-            if device.type == "mps":
-                torch.mps.synchronize()
-            elif device.type == "cuda":
-                torch.cuda.synchronize()
+            synchronize(device)
             t_decode = time.perf_counter()
 
             reconstructed = postprocess(x_hat)

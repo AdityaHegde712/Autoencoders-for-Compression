@@ -102,7 +102,7 @@ class ViratDataset(Dataset):
         for f_path in frame_paths:
             img = cv2.imread(f_path)
             # Convert BGR to RGB
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2YCR_CB)
             frames.append(img)
             
         # Convert to float tensors [0, 1]

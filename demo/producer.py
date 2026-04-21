@@ -3,7 +3,6 @@ import torch
 import sys
 import time 
 import struct
-import blosc
 import numpy as np
 
 from confluent_kafka import Producer
@@ -11,26 +10,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ml.models.autoencoder import AsymmetricAutoencoder 
-from ml.models.entropy import FactorizedBottleneck
-from scripts.live_demo import postprocess
-from ml.utils.ops import quantize_with_noise, round_ste
+from ml.models.autoencoder_nrm_conv import AsymmetricAutoencoder as AsymmetricAutoencoder_nrm_conv
+from ml.utils.device import get_device, maybe_compile
+from demo.latent_bitstream import convert_to_bitstream
 
 # --- CONFIG ---
 KAFKA_BROKER = 'localhost:9092'
 TOPIC = 'ai-compressed-video'
 CHECKPOINT = "../ml/models/saved/best_model.pth"
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-def convert_to_bitstream(tensor):
-    # 1. Quantize 
-    quantized = round_ste(tensor)
-
-    # 2. Convert to bytes and compress
-    raw_bytes = quantized.numpy().tobytes()
-    bitstream = blosc.compress(raw_bytes, cname='zstd', clevel=5)
-
-    return bitstream
+DEVICE = get_device()
 
 def pad_to_multiple(tensor: torch.Tensor, multiple: int = 4):
     """Pad H and W to the nearest multiple (encoder downsamples by 4x)."""
@@ -44,8 +32,8 @@ def pad_to_multiple(tensor: torch.Tensor, multiple: int = 4):
 def preprocess(frame_bgr: np.ndarray, device: torch.device) -> torch.Tensor:
     """BGR uint8 HWC → RGB float32 NCHW tensor on device, values in [0, 1]."""
     frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    tensor = torch.from_numpy(frame_rgb).permute(2, 0, 1).unsqueeze(0).float() / 255.0
-    return tensor.to(device)
+    tensor = torch.from_numpy(frame_rgb).permute(2, 0, 1).unsqueeze(0).float().mul_(1.0 / 255.0)
+    return tensor.to(device, non_blocking=device.type == "cuda")
 
 
 def package_frame(frame_idx, is_iframe, latent, bitstream):
@@ -63,19 +51,20 @@ def package_frame(frame_idx, is_iframe, latent, bitstream):
     return packet
 
 # 1. Load Model
-model = AsymmetricAutoencoder(in_channels=3, latent_channels=64).to(DEVICE)
-model.load_state_dict(torch.load(CHECKPOINT, map_location=DEVICE))
+model = AsymmetricAutoencoder_nrm_conv(in_channels=3, latent_channels=64).to(DEVICE)
+state = torch.load(CHECKPOINT, map_location=DEVICE, weights_only=True)
+model.load_state_dict(state)
 model.eval()
-encoder = torch.compile(model.encoder)
-decoder = torch.compile(model.decoder)
+encoder = maybe_compile(model.encoder, DEVICE)
 
 p = Producer({'bootstrap.servers': KAFKA_BROKER, 'message.max.bytes': 5000000})
 cap = cv2.VideoCapture(0)
+cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
 print("Producer started. Sending AI-compressed latent tensors...")
 
 try:
-    with torch.no_grad():
+    with torch.inference_mode():
         gop_size = 10
         gop_count = 0
         inter = 0
@@ -117,7 +106,7 @@ try:
             
             # 1. Preprocess and buffer
             preprocess_start = time.time()
-            frame = cv2.resize(frame, (620, 480))
+            frame = cv2.resize(frame, (620, 480), interpolation=cv2.INTER_LINEAR)
             tensor = preprocess(frame, DEVICE)
             preprocess_time = time.time() - preprocess_start
             preprocess_total_time += preprocess_time
@@ -163,11 +152,11 @@ try:
                 print(f"Original tensor size: {ave_tensor_size/gop_count} bytes")
                 print(f"Original latent size: {ave_raw_size/gop_count} bytes")
                 print(f"Compressed bitstream: {ave_com_size/gop_count} bytes")
+            
+            #packet = package_frame(1, False, latent ,latent_compressed)
 
-            packet = package_frame(1, False, latent ,latent_compressed)
-
-            p.produce(TOPIC, value=packet)
-            p.poll(0) # Serve delivery callbacks
+            #p.produce(TOPIC, value=packet)
+            #p.poll(0) # Serve delivery callbacks
 
         
 

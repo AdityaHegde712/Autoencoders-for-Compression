@@ -24,6 +24,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ml.dataset import ViratDataset
 from ml.models.autoencoder import AsymmetricAutoencoder
+from ml.utils.device import get_device
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_PATH   = os.path.join(PROJECT_ROOT, 'data', 'processed_frames')
@@ -31,7 +32,7 @@ TRAIN_SPLIT = 0.75
 VAL_SPLIT   = 0.15
 IFRAME_PROB = 0.10
 BATCH_SIZE  = 16
-DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE      = get_device()
 
 
 def get_test_folders():
