@@ -18,7 +18,7 @@ from demo.kafka_msg_processer import compress_for_kafka, compress_frame_for_kafk
 # --- CONFIG ---
 KAFKA_BROKER = 'localhost:9092'
 TOPIC = 'ai-compressed-video'
-CHECKPOINT = "../ml/models/saved/DWS_epoch_30.pth"
+CHECKPOINT = "../ml/models/saved/baseline_epoch_10.pth"
 DEVICE = get_device()
 
 def pad_to_multiple(tensor: torch.Tensor, multiple: int = 4):
@@ -29,13 +29,6 @@ def pad_to_multiple(tensor: torch.Tensor, multiple: int = 4):
     if pad_h or pad_w:
         tensor = torch.nn.functional.pad(tensor, (0, pad_w, 0, pad_h), mode="reflect")
     return tensor, h, w
-
-def preprocess(frame_bgr: np.ndarray, device: torch.device) -> torch.Tensor:
-    """BGR uint8 HWC → RGB float32 NCHW tensor on device, values in [0, 1]."""
-    frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-    tensor = torch.from_numpy(frame_rgb).permute(2, 0, 1).unsqueeze(0).float().mul_(1.0 / 255.0)
-    return tensor.to(device, non_blocking=device.type == "cuda")
-
 
 def package_frame(frame_idx, is_iframe, latent, bitstream):
     # 1. Get metadata
@@ -68,7 +61,8 @@ try:
     with torch.inference_mode():
         gop_size = 10
         gop_count = 0
-        inter = 0
+        frame_in_gop = 0
+        prev_latent = None
 
         preprocess_total_time = 0
         padding_total_time = 0
@@ -87,10 +81,7 @@ try:
             if not ret: break
             
             # --- TIMING: Start iteration timer ---
-            inter = inter + 1
-            inter = inter % gop_size
-
-            if inter == 0:
+            if frame_in_gop == 0:
                 preprocess_total_time = 0
                 padding_total_time = 0
                 neural_total_time = 0
@@ -123,10 +114,17 @@ try:
             latent = encoder(target_padded)
             neural_time = time.time() - neural_start
             neural_total_time += neural_time
+
+            # GOP logic:
+            # - first frame in each 10-frame GOP sends absolute latent (I-frame)
+            # - next 9 frames send latent delta from previous latent (P-frames)
+            is_iframe = (frame_in_gop == 0) or (prev_latent is None)
+            latent_to_send = latent if is_iframe else (latent - prev_latent)
+            prev_latent = latent.detach()
             
             # Convert to bitstream
             bitstream_start = time.time()
-            latent_compressed = convert_to_bitstream(latent)
+            latent_compressed = compress_for_kafka(latent_to_send)
             bitstream_time = time.time() - bitstream_start
             bitstream_total_time += bitstream_time
             
@@ -136,11 +134,11 @@ try:
 
             ave_frame_size += frame.nbytes
             ave_tensor_size += tensor.nbytes
-            ave_raw_size += latent.nbytes
+            ave_raw_size += latent_to_send.nbytes
             ave_com_size += len(latent_compressed)
             
             #print ave metric
-            if inter == gop_size - 1:
+            if frame_in_gop == gop_size - 1:
                 gop_count += 1
                 print(f"\n--- Frame {gop_count} Timing ---")
                 print(f"  Preprocess: {preprocess_total_time*(1000/gop_size):.2f}ms")
@@ -153,12 +151,14 @@ try:
                 print(f"Original tensor size: {ave_tensor_size/gop_size} bytes")
                 print(f"Original latent size: {ave_raw_size/gop_size} bytes")
                 print(f"Compressed bitstream: {ave_com_size/gop_size} bytes")
-                print(f"Compressed frame    : {len(compress_frame_for_kafka(frame))} bytes")
+                print(f"Compressed MPS30fps: {(ave_com_size/gop_size)*8*30/1000000} MPS")
             
-            packet = package_frame(1, False, latent ,latent_compressed)
+            frame_in_gop = (frame_in_gop + 1) % gop_size
+            
+            #packet = package_frame(1, False, latent ,latent_compressed)
 
-            p.produce(TOPIC, value=packet)
-            p.poll(0) # Serve delivery callbacks
+            #p.produce(TOPIC, value=packet)
+            #p.poll(0) # Serve delivery callbacks
 
         
 

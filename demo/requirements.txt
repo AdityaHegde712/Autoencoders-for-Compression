@@ -12,3 +12,4 @@ blosc
 
 # Utilities 
 tqdm
+safetensors

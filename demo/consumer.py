@@ -5,6 +5,7 @@ import sys
 import time 
 import blosc
 import struct
+from safetensors.torch import load as safe_load
 
 from confluent_kafka import Consumer
 from pathlib import Path
@@ -18,7 +19,7 @@ from scripts.live_demo import postprocess
 # --- CONFIG ---
 KAFKA_BROKER = 'localhost:9092'
 TOPIC = 'ai-compressed-video'
-CHECKPOINT = "../ml/models/saved/best_model.pth"
+CHECKPOINT = "../ml/models/saved/DWS_epoch_30.pth"
 DEVICE = get_device()
 
 RESOLUTION_W = 1920
@@ -84,6 +85,7 @@ try:
             iteration_start = time.time()
             
             package = unpackage_frame(msg.value())
+            
 
             # 2. Deserialization
             deser_start = time.time()

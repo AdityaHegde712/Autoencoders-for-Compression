@@ -96,32 +96,43 @@ class AsymmetricAutoencoder(nn.Module):
 
         # 3. HEAVY DECODER (for Server side)
         # Goal: Upsample and restore detail
-        self.decoder = nn.Sequential(
-            #block 1
-            nn.Conv2d(64, 128, kernel_size=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(inplace=True),
-            #block 2
-            DepthwiseSeparableConvTranspose(128, 64, kernel_size=5, stride=2, padding=2, output_padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            #Block 3
-            DepthwiseSeparableConvTranspose(64, 32, kernel_size=5, stride=2, padding=2, output_padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
-            ResConvBlock(32),
-            #block 4
-            DepthwiseSeparableConvTranspose(32, 16, kernel_size=5, stride=2, padding=2, output_padding=1),
-            nn.BatchNorm2d(16),
-            nn.ReLU(inplace=True),
-            ResConvBlock(16),
-            #block 5 — fourth ×2 to mirror encoder (four stride-2 downs); without this, output is H/2 × W/2
-            DepthwiseSeparableConvTranspose(16, 16, kernel_size=5, stride=2, padding=2, output_padding=1),
-            nn.BatchNorm2d(16),
-            nn.ReLU(inplace=True),
-            #block 6
-            nn.Conv2d(16, in_channels, kernel_size=3, padding=1)
-        )
+        if legacy_encoder:
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(latent_channels, 32, kernel_size=5, stride=2, padding=2, output_padding=1),
+                nn.ReLU(inplace=True),
+                ResConvBlock(32),
+                nn.ConvTranspose2d(32, 16, kernel_size=5, stride=2, padding=2, output_padding=1),
+                nn.ReLU(inplace=True),
+                ResConvBlock(16),
+                nn.Conv2d(16, in_channels, kernel_size=3, padding=1)
+            )
+        else:
+            self.decoder = nn.Sequential(
+                #block 1
+                nn.Conv2d(64, 128, kernel_size=1),
+                nn.BatchNorm2d(128),
+                nn.ReLU(inplace=True),
+                #block 2
+                DepthwiseSeparableConvTranspose(128, 64, kernel_size=5, stride=2, padding=2, output_padding=1),
+                nn.BatchNorm2d(64),
+                nn.ReLU(inplace=True),
+                #Block 3
+                DepthwiseSeparableConvTranspose(64, 32, kernel_size=5, stride=2, padding=2, output_padding=1),
+                nn.BatchNorm2d(32),
+                nn.ReLU(inplace=True),
+                ResConvBlock(32),
+                #block 4
+                DepthwiseSeparableConvTranspose(32, 16, kernel_size=5, stride=2, padding=2, output_padding=1),
+                nn.BatchNorm2d(16),
+                nn.ReLU(inplace=True),
+                ResConvBlock(16),
+                #block 5 — fourth ×2 to mirror encoder (four stride-2 downs); without this, output is H/2 × W/2
+                DepthwiseSeparableConvTranspose(16, 16, kernel_size=5, stride=2, padding=2, output_padding=1),
+                nn.BatchNorm2d(16),
+                nn.ReLU(inplace=True),
+                #block 6
+                nn.Conv2d(16, in_channels, kernel_size=3, padding=1)
+            )
 
     def forward(self, x, training=True):
         """

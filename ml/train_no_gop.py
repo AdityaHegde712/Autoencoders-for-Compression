@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from pytorch_msssim import SSIM
+from pytorch_msssim import MS_SSIM
 import os
 import csv
 import datetime
@@ -21,7 +21,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_PATH = os.path.join(PROJECT_ROOT, 'data', 'processed_frames')
 BATCH_SIZE     = 32
 LEARNING_RATE  = 3e-4
-LAMBDA_BITRATE = 0.02
+LAMBDA_BITRATE = 0.01
 LATENT_CHANNELS = 64
 EPOCHS = 100
 DEVICE         = get_device()
@@ -41,7 +41,7 @@ def run_name_generator():
 def _compute_distortion_loss(
     output: torch.Tensor,
     target: torch.Tensor,
-    ssim_module: SSIM,
+    ssim_module: MS_SSIM,
     alpha: float = ALPHA_SSIM,
 ) -> torch.Tensor:
     """
@@ -75,7 +75,7 @@ def compute_loss(
     output: torch.Tensor,
     target: torch.Tensor,
     likelihoods: torch.Tensor,
-    ssim_module: SSIM,
+    ssim_module: MS_SSIM,
     lambda_rate: float,
     alpha: float = ALPHA_SSIM,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -94,12 +94,12 @@ def get_loss(
     data_range: float = 1.0,
     size_average: bool = True,
     channel: int = 3
-) -> SSIM:
+) -> MS_SSIM:
     """
     # TODO: Add more loss modules
     Returns a loss module.
     """
-    return SSIM(data_range=data_range, size_average=size_average, channel=channel).to(DEVICE)
+    return MS_SSIM(data_range=data_range, size_average=size_average, channel=channel).to(DEVICE)
 
 
 def get_scheduler(

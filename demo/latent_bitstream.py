@@ -8,7 +8,7 @@ def convert_to_bitstream(tensor):
     quantized = round_ste(tensor)
 
     # 2. Convert to bytes and compress
-    raw_bytes = quantized.detach().cpu().contiguous().numpy().tobytes()
+    raw_bytes = quantized.detach().cpu().numpy().tobytes()
     bitstream = blosc.compress(raw_bytes, cname="zstd", clevel=5)
 
     return bitstream

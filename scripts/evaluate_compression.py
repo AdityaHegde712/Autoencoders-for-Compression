@@ -23,7 +23,8 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ml.models.autoencoder import AsymmetricAutoencoder
 from ml.utils.device import get_device, maybe_compile, synchronize
 from demo.latent_bitstream import convert_to_bitstream
-
+from demo.preprocess_gpu import preprocess_gpu
+from demo.kafka_msg_processer import compress_for_kafka
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_IMAGE = os.path.join(PROJECT_ROOT, "data", "1080p-AHD-CCTV.jpg")
@@ -119,7 +120,7 @@ def main() -> None:
 
             t_pre_start = time.perf_counter()
             frame = cv2.resize(image_bgr, (args.width, args.height), interpolation=cv2.INTER_LINEAR)
-            tensor = preprocess(frame, device)
+            tensor = preprocess_gpu(frame, device)
             synchronize(device)
             t_pre_end = time.perf_counter()
             pre_ms_total += (t_pre_end - t_pre_start) * 1000
