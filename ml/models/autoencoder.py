@@ -109,11 +109,17 @@ class AsymmetricAutoencoder(nn.Module):
             DepthwiseSeparableConvTranspose(64, 32, kernel_size=5, stride=2, padding=2, output_padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(inplace=True),
+            ResConvBlock(32),
             #block 4
             DepthwiseSeparableConvTranspose(32, 16, kernel_size=5, stride=2, padding=2, output_padding=1),
             nn.BatchNorm2d(16),
             nn.ReLU(inplace=True),
-            #block 5
+            ResConvBlock(16),
+            #block 5 — fourth ×2 to mirror encoder (four stride-2 downs); without this, output is H/2 × W/2
+            DepthwiseSeparableConvTranspose(16, 16, kernel_size=5, stride=2, padding=2, output_padding=1),
+            nn.BatchNorm2d(16),
+            nn.ReLU(inplace=True),
+            #block 6
             nn.Conv2d(16, in_channels, kernel_size=3, padding=1)
         )
 

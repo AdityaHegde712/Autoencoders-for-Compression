@@ -48,7 +48,7 @@ def pad_to_multiple(tensor: torch.Tensor, multiple: int = 4):
 
 def preprocess(frame_bgr: np.ndarray, device: torch.device) -> torch.Tensor:
     """BGR uint8 HWC → RGB float32 NCHW tensor on device, values in [0, 1]."""
-    frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2YCR_CB)
+    frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
     tensor = torch.from_numpy(frame_rgb).permute(2, 0, 1).unsqueeze(0).float().mul_(1.0 / 255.0)
     return tensor.to(device, non_blocking=device.type == "cuda")
 
@@ -195,6 +195,7 @@ def main() -> None:
     if tensor is not None:
         print(f"Input tensor size    : {tensor.nbytes:.2f} bytes (per run)")
     print(f"Latent size          : {avg_latent_bytes:.2f} bytes (avg per run)")
+    print(f"Decoder output size   : {x_hat.shape[2]}x{x_hat.shape[3]}x3  (avg per run)")
     print(f"Bitstream size       : {avg_bitstream_bytes:.2f} bytes (avg per run)")
     print(f"Bitstream BPP        : {avg_bitstream_bpp:.4f} (vs resized RGB)")
 

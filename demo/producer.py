@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ml.models.autoencoder_nrm_conv import AsymmetricAutoencoder as AsymmetricAutoencoder_nrm_conv
+from ml.models.autoencoder import AsymmetricAutoencoder
 from ml.utils.device import get_device, maybe_compile
 from demo.latent_bitstream import convert_to_bitstream
 
@@ -51,7 +51,7 @@ def package_frame(frame_idx, is_iframe, latent, bitstream):
     return packet
 
 # 1. Load Model
-model = AsymmetricAutoencoder_nrm_conv(in_channels=3, latent_channels=64).to(DEVICE)
+model = AsymmetricAutoencoder(in_channels=3, latent_channels=64).to(DEVICE)
 state = torch.load(CHECKPOINT, map_location=DEVICE, weights_only=True)
 model.load_state_dict(state)
 model.eval()
@@ -106,7 +106,7 @@ try:
             
             # 1. Preprocess and buffer
             preprocess_start = time.time()
-            frame = cv2.resize(frame, (620, 480), interpolation=cv2.INTER_LINEAR)
+            frame = cv2.resize(frame, (1920, 1080), interpolation=cv2.INTER_LINEAR)
             tensor = preprocess(frame, DEVICE)
             preprocess_time = time.time() - preprocess_start
             preprocess_total_time += preprocess_time
@@ -148,15 +148,15 @@ try:
                 print(f"  Bitstream Conversion: {bitstream_total_time*(1000/gop_size):.2f}ms")
                 print(f"  Total Iteration: {iteration_total_time*(1000/gop_size):.2f}ms")
                 print("--------")
-                print(f"Original frame  size: {ave_frame_size/gop_count} bytes")
-                print(f"Original tensor size: {ave_tensor_size/gop_count} bytes")
-                print(f"Original latent size: {ave_raw_size/gop_count} bytes")
-                print(f"Compressed bitstream: {ave_com_size/gop_count} bytes")
+                print(f"Original frame  size: {ave_frame_size/gop_size} bytes")
+                print(f"Original tensor size: {ave_tensor_size/gop_size} bytes")
+                print(f"Original latent size: {ave_raw_size/gop_size} bytes")
+                print(f"Compressed bitstream: {ave_com_size/gop_size} bytes")
             
-            #packet = package_frame(1, False, latent ,latent_compressed)
+            packet = package_frame(1, False, latent ,latent_compressed)
 
-            #p.produce(TOPIC, value=packet)
-            #p.poll(0) # Serve delivery callbacks
+            p.produce(TOPIC, value=packet)
+            p.poll(0) # Serve delivery callbacks
 
         
 

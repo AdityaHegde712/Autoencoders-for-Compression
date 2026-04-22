@@ -21,8 +21,8 @@ TOPIC = 'ai-compressed-video'
 CHECKPOINT = "../ml/models/saved/best_model.pth"
 DEVICE = get_device()
 
-RESOLUTION_W = 640
-RESOLUTION_H = 480
+RESOLUTION_W = 1920
+RESOLUTION_H = 1080
 
 # --- HELPER ---
 def bitstream_to_tensor(bitstream, shape):

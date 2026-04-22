@@ -13,7 +13,6 @@ import os
 import sys
 import random
 
-import cv2
 import torch
 import numpy as np
 import matplotlib
@@ -45,9 +44,9 @@ def get_test_folders():
     return all_folders[val_end:]
 
 
-def tensor_to_img(t: torch.Tensor) -> np.ndarray:
-    """Convert (C, H, W) tensor in [0,1] to uint8 numpy (H, W, C) RGB."""
-    return (t.permute(1, 2, 0).cpu().numpy() * 255).clip(0, 255).astype(np.uint8)
+def tensor_to_rgb_img(t: torch.Tensor) -> np.ndarray:
+    """Convert RGB tensor (C, H, W) in [0,1] to uint8 RGB image (H, W, C)."""
+    return (t.permute(1, 2, 0).detach().cpu().numpy() * 255.0).clip(0, 255).astype(np.uint8)
 
 
 def main():
@@ -92,8 +91,8 @@ def main():
             else:
                 f_hat = (f_prev + res_hat).clamp(0, 1)
 
-            orig_img  = tensor_to_img(f_curr[0])
-            recon_img = tensor_to_img(f_hat[0])
+            orig_img  = tensor_to_rgb_img(f_curr[0])
+            recon_img = tensor_to_rgb_img(f_hat[0])
             error_img = np.abs(orig_img.astype(np.int16) - recon_img.astype(np.int16))
             error_img = (error_img * 5).clip(0, 255).astype(np.uint8)
 

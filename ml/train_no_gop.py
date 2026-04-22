@@ -46,7 +46,7 @@ def _compute_distortion_loss(
 ) -> torch.Tensor:
     """
     Perceptual distortion loss: alpha * (1 - SSIM) + (1 - alpha) * L1
-    Inputs are full frames in [0, 1].
+    Inputs are full RGB frames in [0, 1].
     """
     o_norm = output
     t_norm = target
@@ -197,11 +197,15 @@ def train():
                 x_hat, x, p_y, loss_module, LAMBDA_BITRATE
             )
 
-            if not torch.isnan(loss):
-                loss.backward()
-                train_loss += loss.item()
-                train_dist += dist_loss.item()
-                train_bpp  += bpp_loss.item()
+            if torch.isnan(loss):
+                optimizer.zero_grad(set_to_none=True)
+                train_bar.set_postfix({"batch_loss": "nan", "lr": f"{scheduler.get_last_lr()[0]:.2e}"})
+                continue
+
+            loss.backward()
+            train_loss += loss.item()
+            train_dist += dist_loss.item()
+            train_bpp  += bpp_loss.item()
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()

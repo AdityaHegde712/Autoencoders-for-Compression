@@ -55,7 +55,8 @@ def postprocess(tensor: torch.Tensor) -> np.ndarray:
     """RGB float32 NCHW tensor → BGR uint8 HWC numpy array."""
     img = tensor.squeeze(0).clamp(0, 1).cpu().permute(1, 2, 0).numpy()
     img = (img * 255).astype(np.uint8)
-    return cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+    return bgr
 
 
 def pad_to_multiple(tensor: torch.Tensor, multiple: int = 4):
