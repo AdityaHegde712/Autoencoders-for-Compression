@@ -30,7 +30,7 @@ DEVICE         = get_device()
 TRAIN_MAX_SAMPLES = 15_000
 VAL_MAX_SAMPLES   = 3_000
 PATIENCE    = 0.1 * EPOCHS
-ALPHA_SSIM      = 0.84
+ALPHA_SSIM      = 0.50
 
 
 def run_name_generator():
@@ -51,10 +51,10 @@ def _compute_distortion_loss(
     o_norm = output
     t_norm = target
 
-    o_small = F.interpolate(o_norm, scale_factor=0.5, mode="bilinear", align_corners=False)
-    t_small = F.interpolate(t_norm, scale_factor=0.5, mode="bilinear", align_corners=False)
+    #o_small = F.interpolate(o_norm, scale_factor=0.5, mode="bilinear", align_corners=False)
+    #t_small = F.interpolate(t_norm, scale_factor=0.5, mode="bilinear", align_corners=False)
 
-    ssim_loss = 1.0 - ssim_module(o_small, t_small)
+    ssim_loss = 1.0 - ssim_module(o_norm, t_norm)
     l1_loss   = F.l1_loss(output, target)
     return alpha * ssim_loss + (1.0 - alpha) * l1_loss
 

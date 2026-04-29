@@ -6,6 +6,9 @@ Downloads 25 .mpg files (~4.9 GB total) into data/virat_aerial_videos/
 Uses parallel downloads (4 workers by default) for faster throughput.
 """
 
+import argparse
+import ast
+import json
 import os
 import sys
 import urllib.request
@@ -16,13 +19,18 @@ import threading
 DOWNLOAD_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "data",
-    "virat_aerial_videos",
+    "virat_video",
 )
 
 BASE_URL = "https://data.kitware.com/api/v1/item/{}/download"
 MAX_WORKERS = 25
+GROUND_LIST_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "ml",
+    "ground_video_list.json",
+)
 
-FILES = [
+FILES_FLIGHT = [
     ("56f57fa48d777f753209c714", "09152008flight2tape1_1.mpg", 192100092),
     ("56f57fb48d777f753209c717", "09152008flight2tape1_10.mpg", 198934832),
     ("56f57fcd8d777f753209c71a", "09152008flight2tape1_2.mpg", 198984652),
@@ -50,7 +58,27 @@ FILES = [
     ("5ef11b419014a6d84ed53971", "09172008flight1tape3_2.mpg", 198485136),
 ]
 
+FILES_GROUND = [
+]
+
 print_lock = threading.Lock()
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Download VIRAT datasets from Kitware Data")
+    parser.add_argument(
+        "--dataset",
+        choices=("flight", "ground"),
+        default="flight",
+        help="Dataset split to download: 'flight' keeps old static list, 'ground' uses Kitware folder filtering",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=MAX_WORKERS,
+        help="Number of parallel downloads",
+    )
+    return parser.parse_args()
 
 
 def format_bytes(n):
@@ -64,6 +92,30 @@ def format_bytes(n):
 def log(msg):
     with print_lock:
         print(msg, flush=True)
+
+
+def load_ground_files(path=GROUND_LIST_PATH):
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read().strip()
+
+    # Accept both valid JSON and python-style "FILES_GROUND = [...]" files.
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        if "=" in text:
+            text = text.split("=", 1)[1].strip()
+        parsed = ast.literal_eval(text)
+
+    files = []
+    for entry in parsed:
+        if isinstance(entry, dict):
+            item_id = entry.get("item_id") or entry.get("source_id") or entry.get("id")
+            filename = entry.get("filename") or entry.get("name")
+            size = entry.get("size")
+        else:
+            item_id, filename, size = entry
+        files.append((str(item_id), str(filename), int(size)))
+    return files
 
 
 def download_file(index, total, item_id, filename, expected_size):
@@ -104,24 +156,41 @@ def download_file(index, total, item_id, filename, expected_size):
 
 
 def main():
+    args = parse_args()
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-    total_size = sum(s for _, _, s in FILES)
-    total = len(FILES)
-    print(f"VIRAT Aerial Dataset Downloader")
+    if args.dataset == "flight":
+        files = FILES_FLIGHT
+        dataset_name = "flight"
+        destination = DOWNLOAD_DIR
+    else:
+        files = load_ground_files()
+        dataset_name = "ground"
+        destination = DOWNLOAD_DIR
+
+    if not files:
+        print(f"No files found for dataset '{dataset_name}'.")
+        sys.exit(1)
+
+    os.makedirs(destination, exist_ok=True)
+
+    total_size = sum(s for _, _, s in files)
+    total = len(files)
+    print("VIRAT Dataset Downloader")
+    print(f"  Dataset: {dataset_name}")
     print(f"  Files: {total} videos")
     print(f"  Total: {format_bytes(total_size)}")
-    print(f"  Workers: {MAX_WORKERS}")
+    print(f"  Workers: {args.workers}")
     print(f"  Destination: {DOWNLOAD_DIR}")
     print()
 
     failures = []
     start = time.time()
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = {
             pool.submit(download_file, i, total, item_id, name, size): name
-            for i, (item_id, name, size) in enumerate(FILES, 1)
+            for i, (item_id, name, size) in enumerate(files, 1)
         }
 
         for future in as_completed(futures):

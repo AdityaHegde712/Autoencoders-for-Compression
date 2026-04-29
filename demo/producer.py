@@ -13,13 +13,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from ml.models.autoencoder import AsymmetricAutoencoder
 from ml.utils.device import get_device, maybe_compile
 from demo.latent_bitstream import convert_to_bitstream
-from demo.preprocess_gpu import preprocess_gpu
+from demo.image_processing_gpu import preprocess_gpu
 from demo.kafka_msg_processer import compress_for_kafka, compress_frame_for_kafka
 # --- CONFIG ---
 KAFKA_BROKER = 'localhost:9092'
 TOPIC = 'ai-compressed-video'
-CHECKPOINT = "../ml/models/saved/DWS_epoch_30.pth"
+CHECKPOINT = "../ml/models/saved/best_model_old.pth"
 DEVICE = get_device()
+RESOLUTION_W = 1280
+RESOLUTION_H = 720
 
 def pad_to_multiple(tensor: torch.Tensor, multiple: int = 4):
     """Pad H and W to the nearest multiple (encoder downsamples by 4x)."""
@@ -52,7 +54,7 @@ def package_frame(frame_idx, is_iframe, latent, bitstream):
     return packet
 
 # 1. Load Model
-model = AsymmetricAutoencoder(in_channels=3, latent_channels=64, legacy_encoder=False).to(DEVICE)
+model = AsymmetricAutoencoder(in_channels=3, latent_channels=64, legacy_encoder=True).to(DEVICE)
 state = torch.load(CHECKPOINT, map_location=DEVICE, weights_only=True)
 model.load_state_dict(state)
 model.eval()
@@ -107,7 +109,7 @@ try:
             
             # 1. Preprocess and buffer
             preprocess_start = time.time()
-            frame = cv2.resize(frame, (1920, 1080), interpolation=cv2.INTER_LINEAR)
+            frame = cv2.resize(frame, (RESOLUTION_W, RESOLUTION_H), interpolation=cv2.INTER_LINEAR)
             tensor = preprocess_gpu(frame, DEVICE)
             preprocess_time = time.time() - preprocess_start
             preprocess_total_time += preprocess_time

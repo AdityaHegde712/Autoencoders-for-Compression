@@ -15,15 +15,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from ml.models.autoencoder import AsymmetricAutoencoder
 from ml.utils.device import get_device, maybe_compile
 from scripts.live_demo import postprocess
+from demo.image_processing_gpu import postprocess_gpu
 
 # --- CONFIG ---
 KAFKA_BROKER = 'localhost:9092'
 TOPIC = 'ai-compressed-video'
-CHECKPOINT = "../ml/models/saved/DWS_epoch_30.pth"
+CHECKPOINT = "../ml/models/saved/best_model_old.pth"
 DEVICE = get_device()
 
-RESOLUTION_W = 1920
-RESOLUTION_H = 1080
+RESOLUTION_W = 1280
+RESOLUTION_H = 720
 
 # --- HELPER ---
 def bitstream_to_tensor(bitstream, shape):
@@ -55,7 +56,7 @@ def unpackage_frame(packet):
     }
 
 # 1. Load Model (Decoder only needed, but loading full is easier)
-model = AsymmetricAutoencoder(in_channels=3, latent_channels=64).to(DEVICE)
+model = AsymmetricAutoencoder(in_channels=3, latent_channels=64, legacy_encoder=True).to(DEVICE)
 model.load_state_dict(torch.load(CHECKPOINT, map_location=DEVICE, weights_only=True))
 model.eval()
 decoder = maybe_compile(model.decoder, DEVICE)
@@ -105,7 +106,7 @@ try:
             decode_time = time.time() - decode_start
             
             postproc_start = time.time()
-            reconstructed_frame = postprocess(x_hat)
+            reconstructed_frame = postprocess_gpu(x_hat)
             postproc_time = time.time() - postproc_start
 
             cv2.imshow('AI Decompressed Feed', reconstructed_frame)

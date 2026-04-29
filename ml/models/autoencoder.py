@@ -1,3 +1,4 @@
+import re
 import torch
 import torch.nn as nn
 from ml.models.entropy import FactorizedBottleneck
@@ -57,11 +58,12 @@ class ResConvBlock(nn.Module):
 
 
 class AsymmetricAutoencoder(nn.Module):
-    def __init__(self, in_channels=3, latent_channels=64, legacy_encoder=False):
+    def __init__(self, in_channels=3, latent_channels=96, legacy_encoder=False):
         super(AsymmetricAutoencoder, self).__init__()
         
         # 1. SHALLOW ENCODER (for Edge device)
         if legacy_encoder:
+            latent_channels = 64
             # Matches older checkpoints (encoder.0 / encoder.2 are plain Conv2d).
             self.encoder = nn.Sequential(
                 nn.Conv2d(in_channels, 16, kernel_size=5, stride=2, padding=2),
@@ -72,27 +74,22 @@ class AsymmetricAutoencoder(nn.Module):
             )
         else:
             # Depthwise separable convolutions to minimise MACs on edge.
+            latent_channels = 96
             self.encoder = nn.Sequential(
                 #block 1
-                DepthwiseSeparableConv(in_channels, 16, kernel_size=5, stride=2, padding=2),
-                nn.BatchNorm2d(16),
+                nn.Conv2d(in_channels, 64, kernel_size=5, stride=2, padding=2),
                 nn.ReLU(inplace=True),
                 #block 2
-                DepthwiseSeparableConv(16, 32, kernel_size=5, stride=2, padding=2),
-                nn.BatchNorm2d(32),
+                nn.Conv2d(64, 128, kernel_size=5, stride=2, padding=2),
                 nn.ReLU(inplace=True),
-                #block 3
-                DepthwiseSeparableConv(32, 64, kernel_size=5, stride=2, padding=2),
-                nn.BatchNorm2d(64),
-                nn.ReLU(inplace=True),
-                #block 4
-                nn.Conv2d(64, 64, kernel_size=5, stride=2, padding=2, groups=64, bias=False),
-                nn.BatchNorm2d(64),
-                nn.ReLU(inplace=True)
+                ResConvBlock(128),
+                ResConvBlock(128),
+                ResConvBlock(128),
+                nn.Conv2d(128, latent_channels, kernel_size=5, stride=2, padding=2)
             )
 
         # 2. BOTTLENECK (Factorized Prior)
-        self.bottleneck = FactorizedBottleneck(64)
+        self.bottleneck = FactorizedBottleneck(latent_channels)
 
         # 3. HEAVY DECODER (for Server side)
         # Goal: Upsample and restore detail
@@ -109,29 +106,24 @@ class AsymmetricAutoencoder(nn.Module):
         else:
             self.decoder = nn.Sequential(
                 #block 1
-                nn.Conv2d(64, 128, kernel_size=1),
-                nn.BatchNorm2d(128),
-                nn.ReLU(inplace=True),
-                #block 2
-                DepthwiseSeparableConvTranspose(128, 64, kernel_size=5, stride=2, padding=2, output_padding=1),
-                nn.BatchNorm2d(64),
-                nn.ReLU(inplace=True),
-                #Block 3
-                DepthwiseSeparableConvTranspose(64, 32, kernel_size=5, stride=2, padding=2, output_padding=1),
-                nn.BatchNorm2d(32),
-                nn.ReLU(inplace=True),
-                ResConvBlock(32),
-                #block 4
-                DepthwiseSeparableConvTranspose(32, 16, kernel_size=5, stride=2, padding=2, output_padding=1),
-                nn.BatchNorm2d(16),
-                nn.ReLU(inplace=True),
-                ResConvBlock(16),
-                #block 5 — fourth ×2 to mirror encoder (four stride-2 downs); without this, output is H/2 × W/2
-                DepthwiseSeparableConvTranspose(16, 16, kernel_size=5, stride=2, padding=2, output_padding=1),
-                nn.BatchNorm2d(16),
-                nn.ReLU(inplace=True),
-                #block 6
-                nn.Conv2d(16, in_channels, kernel_size=3, padding=1)
+                ResConvBlock(latent_channels),
+                ResConvBlock(latent_channels),
+                ResConvBlock(latent_channels),
+                # Sub-pixel Convolution 1 (Upsample factor 2)
+                # Formula: Channels / (factor^2)
+                nn.Conv2d(latent_channels, 512, kernel_size=3, padding=1),
+                nn.PixelShuffle(2),
+                nn.LeakyReLU(inplace=True),
+                
+                # Sub-pixel Convolution 2 (Upsample factor 2)
+                nn.Conv2d(128, 256, kernel_size=3, padding=1),
+                nn.PixelShuffle(2),
+                nn.LeakyReLU(inplace=True),
+                
+                # Sub-pixel Convolution 3 (Upsample factor 2)
+                nn.Conv2d(64, 12, kernel_size=3, padding=1),
+                nn.PixelShuffle(2),
+                # Final output is 3 channels (RGB)
             )
 
     def forward(self, x, training=True):

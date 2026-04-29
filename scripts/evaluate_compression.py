@@ -7,7 +7,8 @@ Benchmark aligned with demo/producer.py plus full decode path:
 3) encoder → convert_to_bitstream(latent)   # producer-style on encoder output
 4) bottleneck → decoder → reconstruction (same order as model.forward decode path)
 
-Timing (ms, averaged over --runs): preprocess, padding, encode, bitstream, bottleneck, decode, total per run.
+Timing (ms, averaged over --runs): preprocess, padding, encode, bitstream,
+bottleneck, decode, postprocess, total per run.
 """
 import argparse
 import os
@@ -23,7 +24,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from ml.models.autoencoder import AsymmetricAutoencoder
 from ml.utils.device import get_device, maybe_compile, synchronize
 from demo.latent_bitstream import convert_to_bitstream
-from demo.preprocess_gpu import preprocess_gpu
+from demo.image_processing_gpu import preprocess_gpu, postprocess_gpu
 from demo.kafka_msg_processer import compress_for_kafka
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -32,9 +33,20 @@ DEFAULT_IMAGE = os.path.join(PROJECT_ROOT, "data", "1080p-AHD-CCTV.jpg")
 
 def randomize_model_weights(model: torch.nn.Module) -> None:
     """Fill model parameters with random values."""
-    with torch.inference_mode():
-        for param in model.parameters():
-            param.copy_(torch.randn_like(param))
+    for m in model.modules():
+        # Check for both standard and transpose convolutions
+        if isinstance(m, (torch.nn.Conv2d, torch.nn.ConvTranspose2d)):
+            # nonlinearity='relu' is key for your architecture
+            torch.nn.init.kaiming_uniform_(m.weight, mode='fan_in', nonlinearity='relu')
+            
+            if m.bias is not None:
+                # Initializing bias to 0 prevents initial color shifts
+                torch.nn.init.constant_(m.bias, 0)
+                
+        elif isinstance(m, torch.nn.BatchNorm2d):
+            # Scale factor to 1 and bias to 0 is the "neutral" state for BN
+            torch.nn.init.constant_(m.weight, 1)
+            torch.nn.init.constant_(m.bias, 0)
 
 
 def pad_to_multiple(tensor: torch.Tensor, multiple: int = 4):
@@ -57,6 +69,7 @@ def preprocess(frame_bgr: np.ndarray, device: torch.device) -> torch.Tensor:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--image", default=DEFAULT_IMAGE, help="Path to image in data/")
+    parser.add_argument("--legacy-encoder", action="store_true", help="Use legacy encoder")
     parser.add_argument("--latent-channels", type=int, default=64, help="Model latent channel count")
     parser.add_argument("--width", type=int, default=620, help="Resize width (producer default 620)")
     parser.add_argument("--height", type=int, default=480, help="Resize height (producer default 480)")
@@ -66,6 +79,11 @@ def main() -> None:
         type=str,
         default=None,
         help="Optional path to .pth; if set, loads weights instead of randomizing",
+    )
+    parser.add_argument(
+        "--show-recon",
+        action="store_true",
+        help="Open a window with the last reconstructed frame (BGR) after the timed runs",
     )
     args = parser.parse_args()
 
@@ -77,7 +95,7 @@ def main() -> None:
     device = get_device()
 
     t0 = time.perf_counter()
-    model = AsymmetricAutoencoder(in_channels=3, latent_channels=args.latent_channels, legacy_encoder=False).to(device)
+    model = AsymmetricAutoencoder(in_channels=3, latent_channels=args.latent_channels, legacy_encoder=args.legacy_encoder).to(device)
     model.eval()
     encoder = maybe_compile(model.encoder, device)
     decoder = maybe_compile(model.decoder, device)
@@ -103,6 +121,7 @@ def main() -> None:
     bitstream_ms_total = 0.0
     bn_ms_total = 0.0
     dec_ms_total = 0.0
+    post_ms_total = 0.0
     run_total_ms = 0.0
     latent_bytes_total = 0
     bitstream_bytes_total = 0
@@ -111,6 +130,7 @@ def main() -> None:
     latent = None
     bitstream = b""
     x_hat = None
+    recon_frame = None
     p_y = None
 
     with torch.inference_mode():
@@ -157,7 +177,13 @@ def main() -> None:
             t_dec_end = time.perf_counter()
             dec_ms_total += (t_dec_end - t_dec_start) * 1000
 
-            run_total_ms += (t_dec_end - t_run_start) * 1000
+            t_post_start = time.perf_counter()
+            recon_frame = postprocess_gpu(x_hat)
+            synchronize(device)
+            t_post_end = time.perf_counter()
+            post_ms_total += (t_post_end - t_post_start) * 1000
+
+            run_total_ms += (t_post_end - t_run_start) * 1000
 
     t4 = time.perf_counter()
 
@@ -166,6 +192,7 @@ def main() -> None:
     print(f"Image                : {args.image}")
     print(f"Resize               : {args.width}x{args.height} (producer-style)")
     print(f"Timed runs           : {n}")
+    print(f"Legacy encoder       : {args.legacy_encoder}")
     print(f"Weights              : {'checkpoint ' + args.checkpoint if args.checkpoint else 'random'}")
     if tensor is not None:
         print(f"Input tensor shape   : {tuple(tensor.shape)} (after preprocess)")
@@ -185,20 +212,26 @@ def main() -> None:
     print(f"Bitstream conversion : {bitstream_ms_total / n:.6f}")
     print(f"Bottleneck           : {bn_ms_total / n:.6f}")
     print(f"Decode               : {dec_ms_total / n:.6f}")
+    print(f"Postprocess          : {post_ms_total / n:.6f}")
     print(f"Pipeline total/run   : {run_total_ms / n:.6f}")
     print(f"Wall total           : {(t4 - t0) * 1000:.6f}")
     print()
     avg_latent_bytes = latent_bytes_total / n
     avg_bitstream_bytes = bitstream_bytes_total / n
-    denom_pixels = tensor.shape[2] * tensor.shape[3] * 3 if tensor is not None else 1
+    denom_pixels = tensor.shape[2] * tensor.shape[3]  if tensor is not None else 1
     avg_bitstream_bpp = (avg_bitstream_bytes * 8) / denom_pixels
     print(f"Input image (resized): {frame.nbytes:.2f} bytes (per run)")
     if tensor is not None:
         print(f"Input tensor size    : {tensor.nbytes:.2f} bytes (per run)")
     print(f"Latent size          : {avg_latent_bytes:.2f} bytes (avg per run)")
-    print(f"Decoder output size   : {x_hat.shape[2]}x{x_hat.shape[3]}x3  (avg per run)")
     print(f"Bitstream size       : {avg_bitstream_bytes:.2f} bytes (avg per run)")
     print(f"Bitstream BPP        : {avg_bitstream_bpp:.4f} (vs resized RGB)")
+
+    if args.show_recon and recon_frame is not None:
+        cv2.imshow("recon_frame", recon_frame)
+        print("Close the image window or press a key in it to exit.")
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":
