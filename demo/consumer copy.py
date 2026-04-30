@@ -2,7 +2,7 @@ import cv2
 import torch
 import numpy as np
 import sys
-import time
+import time 
 import blosc
 import struct
 
@@ -11,15 +11,23 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ml.models.autoencoder import AsymmetricAutoencoder
+from ml.models.iframe_encoder import AsymmetricAutoencoder as IFrameAutoencoder
+from ml.models.pframe_encoder import AsymmetricAutoencoder as PFrameAutoencoder
 from ml.utils.device import get_device, maybe_compile
 from demo.image_processing_gpu import postprocess_gpu
 
 # --- CONFIG ---
-KAFKA_BROKER = "localhost:9092"
-TOPIC = "ai-compressed-video"
-CHECKPOINT = "../ml/models/saved/best_model_old.pth"
+KAFKA_BROKER = 'localhost:9092'
+TOPIC = 'ai-compressed-video'
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+IFRAME_CHECKPOINT = PROJECT_ROOT / "ml/models/saved/best_iframe.pth"
+PFRAME_CHECKPOINT = PROJECT_ROOT / "ml/models/saved/best_pframe.pth"
 DEVICE = get_device()
+
+# Must match producer_dual_model.py / training.
+IFRAME_LEGACY_ENCODER = False
+PFRAME_LEGACY_ENCODER = False
+GOP_SIZE = 10
 
 RESOLUTION_W = 1280
 RESOLUTION_H = 720
@@ -53,11 +61,23 @@ def unpackage_frame(packet):
         "bitstream": bitstream
     }
 
-# 1. Load Model (Decoder only needed, but loading full is easier)
-model = AsymmetricAutoencoder(in_channels=3, latent_channels=64, legacy_encoder=True).to(DEVICE)
-model.load_state_dict(torch.load(CHECKPOINT, map_location=DEVICE, weights_only=True))
-model.eval()
-decoder = maybe_compile(model.decoder, DEVICE)
+# Load I-frame and P-frame decoders (must match producer checkpoints / legacy flags).
+iframe_model = IFrameAutoencoder(
+    in_channels=3, latent_channels=64, legacy_encoder=IFRAME_LEGACY_ENCODER
+).to(DEVICE)
+pframe_model = PFrameAutoencoder(
+    in_channels=3, latent_channels=64, legacy_encoder=PFRAME_LEGACY_ENCODER
+).to(DEVICE)
+iframe_model.load_state_dict(
+    torch.load(IFRAME_CHECKPOINT, map_location=DEVICE, weights_only=True)
+)
+pframe_model.load_state_dict(
+    torch.load(PFRAME_CHECKPOINT, map_location=DEVICE, weights_only=True)
+)
+iframe_model.eval()
+pframe_model.eval()
+iframe_decoder = maybe_compile(iframe_model.decoder, DEVICE)
+pframe_decoder = maybe_compile(pframe_model.decoder, DEVICE)
 
 c = Consumer({
     'bootstrap.servers': KAFKA_BROKER,
@@ -66,11 +86,15 @@ c = Consumer({
 })
 c.subscribe([TOPIC])
 
-print("Consumer started. Decompressing latent tensors...")
+print(
+    "Consumer started (dual decoder, GOP=%d). I: %s | P: %s"
+    % (GOP_SIZE, IFRAME_CHECKPOINT, PFRAME_CHECKPOINT)
+)
 
 try:
     with torch.inference_mode():
         frame_count = 0
+        prev_hat = None
         iteration_times = []
         deser_times = []
         decode_times = []
@@ -82,7 +106,7 @@ try:
             
             # --- TIMING: Start iteration timer ---
             iteration_start = time.time()
-
+            
             package = unpackage_frame(msg.value())
             
 
@@ -96,11 +120,20 @@ try:
             #latent_q = package["latent"].to(DEVICE)
             h, w = RESOLUTION_H, RESOLUTION_W
             
-            # 3. Decompression Pipeline
-            # Decoder -> Crop Padding -> Postprocess
+            # 3. Decompression Pipeline (I-frame: full frame; P-frame: residual + prev)
             decode_start = time.time()
-            x_hat = decoder(latent_q)
-            x_hat = x_hat[:, :, :h, :w] # Crop to original size
+            is_iframe = bool(package["is_iframe"])
+            if is_iframe:
+                x_hat = iframe_decoder(latent_q)
+                prev_hat = x_hat
+            else:
+                if prev_hat is None:
+                    # Out-of-order or lost I-frame; skip until a new GOP starts.
+                    continue
+                res_hat = pframe_decoder(latent_q)
+                prev_hat = (prev_hat + res_hat).clamp(0, 1)
+                x_hat = prev_hat
+            x_hat = x_hat[:, :, :h, :w]
             decode_time = time.time() - decode_start
             
             postproc_start = time.time()

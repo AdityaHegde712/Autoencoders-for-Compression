@@ -7,7 +7,7 @@ from tqdm import tqdm
 # --- CONFIGURATION ---
 # Use /content/ for speed; move to /content/drive/ only after extraction is done
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VIDEO_DIR = os.path.join(PROJECT_ROOT, 'data', 'virat_videos')
+VIDEO_DIR = os.path.join(PROJECT_ROOT, 'data', 'virat_video')
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, 'data', 'processed_frames')
 
 # Ensure directories exist
@@ -50,7 +50,7 @@ def process_video(v_path):
 
 def extract_all():
     # Find all .mpg videos
-    video_paths = glob.glob(os.path.join(VIDEO_DIR, "*.mpg"))
+    video_paths = glob.glob(os.path.join(VIDEO_DIR, "*.mp4"))
     if not video_paths:
         print(f"No videos found in {VIDEO_DIR}. Please check the path.")
         return

@@ -21,7 +21,7 @@ import torch
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ml.models.autoencoder import AsymmetricAutoencoder
+from ml.models.pframe_encoder import AsymmetricAutoencoder
 from ml.utils.device import get_device, maybe_compile, synchronize
 from demo.latent_bitstream import convert_to_bitstream
 from demo.image_processing_gpu import preprocess_gpu, postprocess_gpu
@@ -71,8 +71,8 @@ def main() -> None:
     parser.add_argument("--image", default=DEFAULT_IMAGE, help="Path to image in data/")
     parser.add_argument("--legacy-encoder", action="store_true", help="Use legacy encoder")
     parser.add_argument("--latent-channels", type=int, default=64, help="Model latent channel count")
-    parser.add_argument("--width", type=int, default=620, help="Resize width (producer default 620)")
-    parser.add_argument("--height", type=int, default=480, help="Resize height (producer default 480)")
+    parser.add_argument("--width", type=int, default=1920, help="Resize width (producer default 620)")
+    parser.add_argument("--height", type=int, default=1080, help="Resize height (producer default 480)")
     parser.add_argument("--runs", type=int, default=50, help="Number of timed runs")
     parser.add_argument(
         "--checkpoint",

@@ -126,6 +126,10 @@ def get_dataloaders(
     data_path: str = DATA_PATH,
     sequence_len: int = 10,
     global_prob: float = 0.20,
+    num_workers: int = 0,
+    pin_memory: bool = False,
+    persistent_workers: bool = True,
+    prefetch_factor: int = 2,
 ):
     all_folders = [f.path for f in os.scandir(data_path) if f.is_dir()]
     random.seed(42)
@@ -147,8 +151,17 @@ def get_dataloaders(
     train_dataset = ViratDataset(DATA_PATH, sequence_len=sequence_len, transform=transform, video_folders=train_folders, max_samples=train_max_samples)
     val_dataset   = ViratDataset(DATA_PATH, sequence_len=sequence_len, transform=transform, video_folders=val_folders,   max_samples=val_max_samples)
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader   = DataLoader(val_dataset,   batch_size=batch_size, shuffle=False)
+    loader_kwargs: dict = {
+        "batch_size": batch_size,
+        "num_workers": num_workers,
+        "pin_memory": pin_memory,
+    }
+    if num_workers > 0:
+        loader_kwargs["persistent_workers"] = persistent_workers
+        loader_kwargs["prefetch_factor"] = prefetch_factor
+
+    train_loader = DataLoader(train_dataset, shuffle=True, **loader_kwargs)
+    val_loader = DataLoader(val_dataset, shuffle=False, **loader_kwargs)
 
     return train_loader, val_loader
 

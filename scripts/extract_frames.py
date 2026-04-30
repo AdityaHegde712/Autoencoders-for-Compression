@@ -4,7 +4,7 @@ import subprocess
 from tqdm import tqdm
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-VIDEO_DIR = os.path.join(PROJECT_ROOT, 'data', 'virat_aerial_videos')
+VIDEO_DIR = os.path.join(PROJECT_ROOT, 'data', 'virat_video')
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, 'data', 'processed_frames')
 
 def extract_all():
