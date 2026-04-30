@@ -1,5 +1,6 @@
 """
-Consumer for demo/producer_dual_model.py: I-frame and P-frame decoders, GOP=3.
+Consumer for demo/producer_dual_model.py: decode I-frames and cropped residuals
+with iframe decoder, then restore full residual and reconstruct frames.
 """
 import cv2
 import torch
@@ -15,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ml.models.iframe_encoder import AsymmetricAutoencoder as IFrameAutoencoder
-from ml.models.pframe_encoder import AsymmetricAutoencoder as PFrameAutoencoder
+from ml.residual_extractor import restore_residual_from_crop
 from ml.utils.device import get_device, maybe_compile
 from demo.checkpoint_utils import strip_torch_compile_prefix
 from demo.image_processing_gpu import postprocess_gpu
@@ -24,15 +25,13 @@ KAFKA_BROKER = "localhost:9092"
 TOPIC = "ai-compressed-video"
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 IFRAME_CHECKPOINT = PROJECT_ROOT / "ml/models/saved/iframe_epoch_56_run1.pth"
-PFRAME_CHECKPOINT = PROJECT_ROOT / "ml/models/saved/pframe_epoch_12_run2.pth"
 DEVICE = get_device()
 
 RESOLUTION_W = 1280
 RESOLUTION_H = 720
 
 IFRAME_LEGACY_ENCODER = False
-PFRAME_LEGACY_ENCODER = False
-GOP_SIZE = 3
+GOP_SIZE = 5
 
 
 def bitstream_to_tensor(bitstream, shape):
@@ -42,14 +41,29 @@ def bitstream_to_tensor(bitstream, shape):
 
 
 def unpackage_frame(packet):
-    header_size = struct.calcsize(">I?IIII")
+    header_size = struct.calcsize(">I?IIIIIIIIII")
     header_data = packet[:header_size]
     bitstream = packet[header_size:]
-    frame_idx, is_iframe, c, h, w, payload_len = struct.unpack(">I?IIII", header_data)
+    (
+        frame_idx,
+        is_iframe,
+        c,
+        h,
+        w,
+        full_h,
+        full_w,
+        top,
+        left,
+        bottom,
+        right,
+        payload_len,
+    ) = struct.unpack(">I?IIIIIIIIII", header_data)
     return {
         "idx": frame_idx,
         "is_iframe": is_iframe,
         "shape": (1, c, h, w),
+        "full_shape": (3, full_h, full_w),
+        "coords": (top, left, bottom, right),
         "bitstream": bitstream,
     }
 
@@ -57,23 +71,13 @@ def unpackage_frame(packet):
 iframe_model = IFrameAutoencoder(
     in_channels=3, latent_channels=64, legacy_encoder=IFRAME_LEGACY_ENCODER
 ).to(DEVICE)
-pframe_model = PFrameAutoencoder(
-    in_channels=3, latent_channels=64, legacy_encoder=PFRAME_LEGACY_ENCODER
-).to(DEVICE)
 iframe_model.load_state_dict(
     strip_torch_compile_prefix(
         torch.load(IFRAME_CHECKPOINT, map_location=DEVICE, weights_only=True)
     )
 )
-pframe_model.load_state_dict(
-    strip_torch_compile_prefix(
-        torch.load(PFRAME_CHECKPOINT, map_location=DEVICE, weights_only=True)
-    )
-)
 iframe_model.eval()
-pframe_model.eval()
 iframe_decoder = maybe_compile(iframe_model.decoder, DEVICE)
-pframe_decoder = maybe_compile(pframe_model.decoder, DEVICE)
 
 c = Consumer(
     {
@@ -85,8 +89,8 @@ c = Consumer(
 c.subscribe([TOPIC])
 
 print(
-    "Dual consumer started (GOP=%d). I: %s | P: %s"
-    % (GOP_SIZE, IFRAME_CHECKPOINT, PFRAME_CHECKPOINT)
+    "Dual consumer started (GOP=%d). I-frame encoder checkpoint: %s"
+    % (GOP_SIZE, IFRAME_CHECKPOINT)
 )
 
 try:
@@ -118,16 +122,21 @@ try:
             )
             deser_time = time.time() - deser_start
 
-            h, w = RESOLUTION_H, RESOLUTION_W
+            full_shape = package["full_shape"]
+            coords = package["coords"]
+            h, w = full_shape[1], full_shape[2]
 
             decode_start = time.time()
             if is_iframe:
                 x_hat = iframe_decoder(latent_q)
                 prev_hat = x_hat
             else:
-                res_hat = pframe_decoder(latent_q)
-                prev_hat = (prev_hat + res_hat).clamp(0, 1)
-                x_hat = prev_hat
+                cropped_res_hat = iframe_decoder(latent_q)
+                full_res = restore_residual_from_crop(
+                    cropped_res_hat.squeeze(0), coords, full_shape
+                ).unsqueeze(0)
+                prev_hat = (prev_hat + full_res).clamp(0, 1)
+                x_hat = full_res
             x_hat = x_hat[:, :, :h, :w]
             decode_time = time.time() - decode_start
 

@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
+from pytorch_msssim import SSIM
 from tqdm import tqdm
 
 # Ensure the root project directory is in the PYTHONPATH
@@ -43,8 +44,10 @@ def _cuda_amp():
 # POC caps — set to None to use the full dataset
 TRAIN_MAX_SAMPLES = 15_000  # 3,000 sequences
 VAL_MAX_SAMPLES   = 3_000  # 600 sequences
-PATIENCE    = 0.1 * EPOCHS
+PATIENCE    = 0.2 * EPOCHS
 COHERENCE_WEIGHT = 0.05          # Temporal stability weight
+ALPHA_DIST = 0.84
+SSIM_MASK_GAIN = 12.0
 
 
 def run_name_generator():
@@ -55,12 +58,23 @@ def run_name_generator():
 def _compute_distortion_loss(
     output: torch.Tensor,
     target: torch.Tensor,
+    ssim_module: SSIM,
+    alpha: float = ALPHA_DIST,
 ) -> torch.Tensor:
     """
-    Distortion loss: L1.
+    Distortion loss: alpha * (1 - SSIM) + (1 - alpha) * L1.
     Compares residual prediction against residual target.
     """
-    return F.l1_loss(output, target)
+    o_norm = ((output + 1.0) / 2.0).clamp(0, 1)
+    t_norm = ((target + 1.0) / 2.0).clamp(0, 1)
+    # Motion-aware SSIM masking: downweight low-residual regions instead of skipping frames.
+    motion_map = torch.mean(torch.abs(target), dim=1, keepdim=True)
+    motion_map = F.interpolate(motion_map, size=o_norm.shape[-2:], mode="bilinear", align_corners=False)
+    ssim_mask = torch.clamp(motion_map * SSIM_MASK_GAIN, 0.0, 1.0)
+    o_masked = o_norm * ssim_mask + t_norm * (1.0 - ssim_mask)
+    ssim_loss = 1.0 - ssim_module(o_masked, t_norm)
+    l1_loss = F.l1_loss(output, target)
+    return alpha * ssim_loss + (1.0 - alpha) * l1_loss
 
 
 def _compute_bpp_loss(
@@ -79,17 +93,27 @@ def compute_loss(
     output: torch.Tensor,
     target: torch.Tensor,
     likelihoods: torch.Tensor,
+    ssim_module: SSIM,
     lambda_rate: float,
+    alpha: float = ALPHA_DIST,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Combined Rate-Distortion loss: L = Distortion + lambda * BPP
-    Distortion = L1
+    Distortion = alpha * (1 - SSIM) + (1 - alpha) * L1
     Returns (total_loss, distortion_loss, bpp_loss) for logging.
     """
-    distortion = _compute_distortion_loss(output, target)
+    distortion = _compute_distortion_loss(output, target, ssim_module, alpha)
     bpp        = _compute_bpp_loss(likelihoods, target)
-    total      = (distortion * 10) + lambda_rate * bpp
+    total      = distortion + lambda_rate * bpp
     return total, distortion, bpp
+
+
+def get_loss(
+    data_range: float = 1.0,
+    size_average: bool = True,
+    channel: int = 3
+) -> SSIM:
+    return SSIM(data_range=data_range, size_average=size_average, channel=channel).to(DEVICE)
 
 
 def get_scheduler(
@@ -168,12 +192,13 @@ def train():
         val_max_samples=VAL_MAX_SAMPLES,
         batch_size=BATCH_SIZE,
         data_path=DATA_PATH,
-        sequence_len=10,
+        sequence_len=3,
         global_prob=0.20,
         num_workers=DATALOADER_NUM_WORKERS if USE_CUDA else 0,
         pin_memory=USE_CUDA,
         persistent_workers=USE_CUDA and DATALOADER_NUM_WORKERS > 0,
         prefetch_factor=2,
+        return_residual=True,
     )
 
     print(f"Batches: {len(train_loader)} train | {len(val_loader)} val")
@@ -182,6 +207,7 @@ def train():
     model, optimizer = get_model_and_optimizer()
     if TORCH_COMPILE:
         model = maybe_compile(model, DEVICE)
+    loss_module = get_loss()
     scaler = torch.amp.GradScaler("cuda", enabled=USE_CUDA)
     scheduler = get_scheduler(optimizer, train_loader)
 
@@ -207,22 +233,20 @@ def train():
             y_prev = None  # Track the latent 'thought' of the last frame
             had_backward = False
 
-            # Predict residuals between consecutive GT frames (no GOP / no I-frame path).
-            for t in range(1, frames.shape[1]):
-                f_prev_gt = frames[:, t - 1]
-                f_curr = frames[:, t]
-                target = f_curr - f_prev_gt
+            # Dataset already returns residual sequence (T, C, H, W).
+            for t in range(frames.shape[1]):
+                target = frames[:, t]
                 with _cuda_amp():
                     res_hat, p_y, y_curr = model(target, training=True)
                     loss, dist_loss, bpp_loss = compute_loss(
-                        res_hat, target, p_y, LAMBDA_BITRATE
+                        res_hat, target, p_y, loss_module, LAMBDA_BITRATE
                     )
                     if y_prev is not None:
                         tcp_loss = F.mse_loss(y_curr, y_prev.detach())
                         loss = loss + COHERENCE_WEIGHT * tcp_loss
 
                 if not torch.isnan(loss):
-                    total_step_loss = loss / max(1, (frames.shape[1] - 1))
+                    total_step_loss = loss / max(1, frames.shape[1])
                     scaler.scale(total_step_loss).backward()
                     had_backward = True
 
@@ -258,14 +282,12 @@ def train():
                 frames = frames.to(DEVICE, non_blocking=USE_CUDA)
                 y_prev = None
 
-                for t in range(1, frames.shape[1]):
-                    f_prev_gt = frames[:, t - 1]
-                    f_curr = frames[:, t]
-                    target = f_curr - f_prev_gt
+                for t in range(frames.shape[1]):
+                    target = frames[:, t]
                     with _cuda_amp():
                         res_hat, p_y, y_curr = model(target, training=False)
                         v_loss, dist_v, bpp_v = compute_loss(
-                            res_hat, target, p_y, LAMBDA_BITRATE
+                            res_hat, target, p_y, loss_module, LAMBDA_BITRATE
                         )
                         if y_prev is not None:
                             tcp_v = F.mse_loss(y_curr, y_prev)

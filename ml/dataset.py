@@ -8,6 +8,7 @@ from torch.utils.data import Dataset, DataLoader
 import glob
 from natsort import natsorted
 from torchvision import transforms
+from ml.residual_extractor import residual_crop_from_two_frames
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_PATH = os.path.join(PROJECT_ROOT, 'data', 'processed_frames')
@@ -51,7 +52,15 @@ class RandomGlobalOrLocal(torch.nn.Module):
 
 
 class ViratDataset(Dataset):
-    def __init__(self, data_root, sequence_len=2, transform=None, video_folders=None, max_samples=None):
+    def __init__(
+        self,
+        data_root,
+        sequence_len=2,
+        transform=None,
+        video_folders=None,
+        max_samples=None,
+        return_residual=False,
+    ):
         """
         Args:
             data_root (str): Path to directory with processed_frames/video_name/frame_*.jpg.
@@ -63,6 +72,7 @@ class ViratDataset(Dataset):
         self.data_root = data_root
         self.sequence_len = sequence_len
         self.transform = transform
+        self.return_residual = return_residual
         
         if video_folders is None:
             # Identify all video folders if not provided
@@ -105,17 +115,26 @@ class ViratDataset(Dataset):
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             frames.append(img)
             
-        # Convert to float tensors [0, 1]
-        # (3, H, W)
+        # Convert to float tensors [0, 1] (3, H, W)
         tensors = [torch.from_numpy(f).permute(2, 0, 1).float() / 255.0 for f in frames]
-        
+
+        if self.return_residual:
+            residuals = []
+            for t in range(1, len(tensors)):
+                cropped_residual, _ = residual_crop_from_two_frames(
+                    tensors[t - 1], tensors[t], block_size=352
+                )
+                if self.transform:
+                    cropped_residual = self.transform(cropped_residual.unsqueeze(0)).squeeze(0)
+                residuals.append(cropped_residual)
+            return torch.stack(residuals)  # (T-1, C, H, W)
+
         if self.transform:
             # Apply same transform to all frames in the sequence (crucial for random crops)
-            # To ensure consistent cropping across T, we combine them
             stacked = torch.stack(tensors) # (T, C, H, W)
             stacked = self.transform(stacked)
             return stacked
-            
+
         return torch.stack(tensors)
 
 
@@ -130,6 +149,7 @@ def get_dataloaders(
     pin_memory: bool = False,
     persistent_workers: bool = True,
     prefetch_factor: int = 2,
+    return_residual: bool = False,
 ):
     all_folders = [f.path for f in os.scandir(data_path) if f.is_dir()]
     random.seed(42)
@@ -148,8 +168,22 @@ def get_dataloaders(
     # RandomGlobalOrLocal: 80% local crop (detail), 20% global resize (scene layout)
     transform = RandomGlobalOrLocal(crop_size=352, global_prob=global_prob)
 
-    train_dataset = ViratDataset(DATA_PATH, sequence_len=sequence_len, transform=transform, video_folders=train_folders, max_samples=train_max_samples)
-    val_dataset   = ViratDataset(DATA_PATH, sequence_len=sequence_len, transform=transform, video_folders=val_folders,   max_samples=val_max_samples)
+    train_dataset = ViratDataset(
+        DATA_PATH,
+        sequence_len=sequence_len,
+        transform=transform,
+        video_folders=train_folders,
+        max_samples=train_max_samples,
+        return_residual=return_residual,
+    )
+    val_dataset = ViratDataset(
+        DATA_PATH,
+        sequence_len=sequence_len,
+        transform=transform,
+        video_folders=val_folders,
+        max_samples=val_max_samples,
+        return_residual=return_residual,
+    )
 
     loader_kwargs: dict = {
         "batch_size": batch_size,
