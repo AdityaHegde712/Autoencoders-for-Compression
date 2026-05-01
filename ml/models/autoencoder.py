@@ -88,28 +88,76 @@ class AsymmetricAutoencoder(nn.Module):
 
 class LegacyAsymmetricAutoencoder(nn.Module):
     """Autoencoder variant used by older checkpoints with regular encoder convs."""
-    def __init__(self, in_channels=3, latent_channels=128):
+    def __init__(self, in_channels=3, latent_channels=128, encoder_channels=(16, 32), decoder_channels=(32, 16)):
         super(LegacyAsymmetricAutoencoder, self).__init__()
+        enc_1, enc_2 = encoder_channels
+        dec_1, dec_2 = decoder_channels
 
         self.encoder = nn.Sequential(
-            nn.Conv2d(in_channels, 16, kernel_size=5, stride=2, padding=2),
+            nn.Conv2d(in_channels, enc_1, kernel_size=5, stride=2, padding=2),
             nn.ReLU(inplace=True),
-            nn.Conv2d(16, 32, kernel_size=5, stride=2, padding=2),
+            nn.Conv2d(enc_1, enc_2, kernel_size=5, stride=2, padding=2),
             nn.ReLU(inplace=True),
-            nn.Conv2d(32, latent_channels, kernel_size=1)
+            nn.Conv2d(enc_2, latent_channels, kernel_size=1)
         )
 
         self.bottleneck = FactorizedBottleneck(latent_channels)
 
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(latent_channels, 32, kernel_size=5, stride=2, padding=2, output_padding=1),
+            nn.ConvTranspose2d(latent_channels, dec_1, kernel_size=5, stride=2, padding=2, output_padding=1),
             nn.ReLU(inplace=True),
-            ResConvBlock(32),
-            nn.ConvTranspose2d(32, 16, kernel_size=5, stride=2, padding=2, output_padding=1),
+            ResConvBlock(dec_1),
+            nn.ConvTranspose2d(dec_1, dec_2, kernel_size=5, stride=2, padding=2, output_padding=1),
             nn.ReLU(inplace=True),
-            ResConvBlock(16),
-            nn.Conv2d(16, in_channels, kernel_size=3, padding=1)
+            ResConvBlock(dec_2),
+            nn.Conv2d(dec_2, in_channels, kernel_size=3, padding=1)
         )
+
+    def forward(self, x, training=True):
+        y = self.encoder(x)
+        y_q, p_y = self.bottleneck(y, training=training)
+        x_hat = self.decoder(y_q)
+        return x_hat, p_y, y
+
+
+class GabrielIFrameAutoencoder(nn.Module):
+    """I-frame autoencoder architecture used by Gabriel's full-frame checkpoint."""
+    def __init__(
+        self,
+        in_channels=3,
+        latent_channels=96,
+        base_channels=64,
+        hidden_channels=128,
+        encoder_res_blocks=3,
+        decoder_res_blocks=3,
+    ):
+        super(GabrielIFrameAutoencoder, self).__init__()
+
+        encoder_layers = [
+            nn.Conv2d(in_channels, base_channels, kernel_size=5, stride=2, padding=2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(base_channels, hidden_channels, kernel_size=5, stride=2, padding=2),
+            nn.ReLU(inplace=True),
+        ]
+        encoder_layers.extend(ResConvBlock(hidden_channels) for _ in range(encoder_res_blocks))
+        encoder_layers.append(nn.Conv2d(hidden_channels, latent_channels, kernel_size=5, stride=2, padding=2))
+        self.encoder = nn.Sequential(*encoder_layers)
+
+        self.bottleneck = FactorizedBottleneck(latent_channels)
+
+        decoder_layers = []
+        decoder_layers.extend(ResConvBlock(latent_channels) for _ in range(decoder_res_blocks))
+        decoder_layers.extend([
+            nn.Conv2d(latent_channels, hidden_channels * 4, kernel_size=3, padding=1),
+            nn.PixelShuffle(2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(hidden_channels, base_channels * 4, kernel_size=3, padding=1),
+            nn.PixelShuffle(2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(base_channels, in_channels * 4, kernel_size=3, padding=1),
+            nn.PixelShuffle(2),
+        ])
+        self.decoder = nn.Sequential(*decoder_layers)
 
     def forward(self, x, training=True):
         y = self.encoder(x)

@@ -23,7 +23,11 @@ from tqdm import tqdm
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ml.dataset import ViratDataset
-from ml.models.autoencoder import AsymmetricAutoencoder, LegacyAsymmetricAutoencoder
+from ml.models.autoencoder import (
+    AsymmetricAutoencoder,
+    GabrielIFrameAutoencoder,
+    LegacyAsymmetricAutoencoder,
+)
 from ml.utils.compression_metrics import compression_ratio_from_bpp
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -56,14 +60,72 @@ def infer_latent_channels(state_dict) -> int:
     return state_dict["bottleneck.log_scale"].shape[1]
 
 
+def infer_legacy_channels(state_dict):
+    encoder_channels = (
+        state_dict["encoder.0.weight"].shape[0],
+        state_dict["encoder.2.weight"].shape[0],
+    )
+    decoder_channels = (
+        state_dict["decoder.0.bias"].shape[0],
+        state_dict["decoder.3.bias"].shape[0],
+    )
+    return encoder_channels, decoder_channels
+
+
+def is_gabriel_iframe_checkpoint(state_dict) -> bool:
+    return "encoder.4.conv1.weight" in state_dict and "decoder.9.weight" in state_dict
+
+
+def infer_gabriel_iframe_config(state_dict):
+    encoder_res_blocks = sum(
+        1
+        for i in range(4, 7)
+        if f"encoder.{i}.conv1.weight" in state_dict
+    )
+    decoder_res_blocks = sum(
+        1
+        for i in range(0, 3)
+        if f"decoder.{i}.conv1.weight" in state_dict
+    )
+    return {
+        "base_channels": state_dict["encoder.0.weight"].shape[0],
+        "hidden_channels": state_dict["encoder.2.weight"].shape[0],
+        "encoder_res_blocks": encoder_res_blocks,
+        "decoder_res_blocks": decoder_res_blocks,
+    }
+
+
 def load_autoencoder_for_checkpoint(model_path: str, device: torch.device):
     state_dict = torch.load(model_path, map_location=device)
     latent_channels = infer_latent_channels(state_dict)
-    uses_legacy_encoder = "encoder.0.weight" in state_dict
-    model_cls = LegacyAsymmetricAutoencoder if uses_legacy_encoder else AsymmetricAutoencoder
-    model = model_cls(in_channels=3, latent_channels=latent_channels).to(device)
+    if is_gabriel_iframe_checkpoint(state_dict):
+        config = infer_gabriel_iframe_config(state_dict)
+        model = GabrielIFrameAutoencoder(
+            in_channels=3,
+            latent_channels=latent_channels,
+            **config,
+        ).to(device)
+        model_name = f"GabrielIFrameAutoencoder({config})"
+        eval_mode = "iframe"
+    elif "encoder.0.weight" in state_dict:
+        encoder_channels, decoder_channels = infer_legacy_channels(state_dict)
+        model = LegacyAsymmetricAutoencoder(
+            in_channels=3,
+            latent_channels=latent_channels,
+            encoder_channels=encoder_channels,
+            decoder_channels=decoder_channels,
+        ).to(device)
+        model_name = (
+            f"LegacyAsymmetricAutoencoder"
+            f"(encoder_channels={encoder_channels}, decoder_channels={decoder_channels})"
+        )
+        eval_mode = "residual"
+    else:
+        model = AsymmetricAutoencoder(in_channels=3, latent_channels=latent_channels).to(device)
+        model_name = "AsymmetricAutoencoder"
+        eval_mode = "residual"
     model.load_state_dict(state_dict)
-    return model, latent_channels, model_cls.__name__
+    return model, latent_channels, model_name, eval_mode
 
 
 def main():
@@ -81,13 +143,14 @@ def main():
     assert os.path.exists(model_path), f"Model not found: {model_path}"
 
     # ── load model ──────────────────────────────────────────────────────────
-    model, latent_channels, model_name = load_autoencoder_for_checkpoint(model_path, DEVICE)
+    model, latent_channels, model_name, eval_mode = load_autoencoder_for_checkpoint(model_path, DEVICE)
     model.eval()
-    print(f"Loaded {model_name} from {model_path} (latent_channels={latent_channels})")
+    print(f"Loaded {model_name} from {model_path} (latent_channels={latent_channels}, eval_mode={eval_mode})")
 
     # ── test dataset ────────────────────────────────────────────────────────
     test_folders = get_test_folders()
-    dataset      = ViratDataset(DATA_PATH, sequence_len=2, video_folders=test_folders, max_samples=args.max_samples)
+    sequence_len = 1 if eval_mode == "iframe" else 2
+    dataset      = ViratDataset(DATA_PATH, sequence_len=sequence_len, video_folders=test_folders, max_samples=args.max_samples)
     loader       = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
     print(f"Test set: {len(test_folders)} videos, {len(dataset)} sequences, {len(loader)} batches")
 
@@ -97,18 +160,23 @@ def main():
     with torch.no_grad():
         for frames in tqdm(loader, desc="Evaluating"):
             frames = frames.to(DEVICE)
-            f_prev, f_curr = frames[:, 0], frames[:, 1]
-
-            is_iframe = random.random() < IFRAME_PROB
-            target    = f_curr if is_iframe else (f_curr - f_prev)
-
-            res_hat, p_y, _ = model(target, training=False)
-
-            # Reconstruct the full frame for quality metrics
-            if is_iframe:
-                f_hat = res_hat.clamp(0, 1)
+            if eval_mode == "iframe":
+                f_curr = frames[:, 0]
+                f_hat, p_y, _ = model(f_curr, training=False)
+                f_hat = f_hat.clamp(0, 1)
             else:
-                f_hat = (f_prev + res_hat).clamp(0, 1)
+                f_prev, f_curr = frames[:, 0], frames[:, 1]
+
+                is_iframe = random.random() < IFRAME_PROB
+                target    = f_curr if is_iframe else (f_curr - f_prev)
+
+                res_hat, p_y, _ = model(target, training=False)
+
+                # Reconstruct the full frame for quality metrics
+                if is_iframe:
+                    f_hat = res_hat.clamp(0, 1)
+                else:
+                    f_hat = (f_prev + res_hat).clamp(0, 1)
 
             # PSNR vs original full frame
             batch_psnr = psnr(f_hat, f_curr)
