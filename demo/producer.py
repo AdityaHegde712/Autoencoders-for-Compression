@@ -15,6 +15,7 @@ from ml.models.autoencoder import AsymmetricAutoencoder
 from ml.models.entropy import FactorizedBottleneck
 from scripts.live_demo import postprocess
 from ml.utils.ops import quantize_with_noise, round_ste
+from ml.utils.compression_metrics import raw_video_size_bytes
 
 # --- CONFIG ---
 KAFKA_BROKER = 'localhost:9092'
@@ -90,6 +91,7 @@ try:
         ave_tensor_size = 0
         ave_raw_size = 0
         ave_com_size = 0
+        ave_raw_video_size = 0
         
 
         while True:
@@ -110,6 +112,7 @@ try:
                 ave_tensor_size = 0
                 ave_raw_size = 0
                 ave_com_size = 0
+                ave_raw_video_size = 0
             iteration_start = time.time()
             
             # Compression Pipeline
@@ -148,10 +151,21 @@ try:
             ave_tensor_size += tensor.nbytes
             ave_raw_size += latent.nbytes
             ave_com_size += len(latent_compressed)
+            ave_raw_video_size += raw_video_size_bytes(orig_h, orig_w)
             
             #print ave metric
             if inter == gop_size - 1:
                 gop_count += 1
+                avg_frame_size = ave_frame_size / gop_size
+                avg_tensor_size = ave_tensor_size / gop_size
+                avg_latent_size = ave_raw_size / gop_size
+                avg_compressed_size = ave_com_size / gop_size
+                avg_raw_video_size = ave_raw_video_size / gop_size
+                compression_ratio = (
+                    float("inf")
+                    if avg_compressed_size <= 0
+                    else avg_raw_video_size / avg_compressed_size
+                )
                 print(f"\n--- Frame {gop_count} Timing ---")
                 print(f"  Preprocess: {preprocess_total_time*(1000/gop_size):.2f}ms")
                 print(f"  Padding: {padding_total_time*(1000/gop_size):.2f}ms")
@@ -159,10 +173,12 @@ try:
                 print(f"  Bitstream Conversion: {bitstream_total_time*(1000/gop_size):.2f}ms")
                 print(f"  Total Iteration: {iteration_total_time*(1000/gop_size):.2f}ms")
                 print("--------")
-                print(f"Original frame  size: {ave_frame_size/gop_count} bytes")
-                print(f"Original tensor size: {ave_tensor_size/gop_count} bytes")
-                print(f"Original latent size: {ave_raw_size/gop_count} bytes")
-                print(f"Compressed bitstream: {ave_com_size/gop_count} bytes")
+                print(f"Original frame  size: {avg_frame_size} bytes")
+                print(f"Original tensor size: {avg_tensor_size} bytes")
+                print(f"Original latent size: {avg_latent_size} bytes")
+                print(f"Compressed bitstream: {avg_compressed_size} bytes")
+                print(f"Raw 24-bit frame    : {avg_raw_video_size} bytes")
+                print(f"Compression ratio   : {compression_ratio:.2f}:1 vs raw 24-bit video")
 
             packet = package_frame(1, False, latent ,latent_compressed)
 

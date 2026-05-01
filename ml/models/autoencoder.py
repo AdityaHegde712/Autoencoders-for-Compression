@@ -85,6 +85,38 @@ class AsymmetricAutoencoder(nn.Module):
         
         return x_hat, p_y, y
 
+
+class LegacyAsymmetricAutoencoder(nn.Module):
+    """Autoencoder variant used by older checkpoints with regular encoder convs."""
+    def __init__(self, in_channels=3, latent_channels=128):
+        super(LegacyAsymmetricAutoencoder, self).__init__()
+
+        self.encoder = nn.Sequential(
+            nn.Conv2d(in_channels, 16, kernel_size=5, stride=2, padding=2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(16, 32, kernel_size=5, stride=2, padding=2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, latent_channels, kernel_size=1)
+        )
+
+        self.bottleneck = FactorizedBottleneck(latent_channels)
+
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose2d(latent_channels, 32, kernel_size=5, stride=2, padding=2, output_padding=1),
+            nn.ReLU(inplace=True),
+            ResConvBlock(32),
+            nn.ConvTranspose2d(32, 16, kernel_size=5, stride=2, padding=2, output_padding=1),
+            nn.ReLU(inplace=True),
+            ResConvBlock(16),
+            nn.Conv2d(16, in_channels, kernel_size=3, padding=1)
+        )
+
+    def forward(self, x, training=True):
+        y = self.encoder(x)
+        y_q, p_y = self.bottleneck(y, training=training)
+        x_hat = self.decoder(y_q)
+        return x_hat, p_y, y
+
 if __name__ == "__main__":
     # Test forward pass with dummy data
     model = AsymmetricAutoencoder(in_channels=3)

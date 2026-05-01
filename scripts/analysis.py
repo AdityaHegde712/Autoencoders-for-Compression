@@ -10,7 +10,6 @@ Usage:
 import argparse
 import os
 import sys
-import math
 import random
 
 import torch
@@ -27,6 +26,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ml.dataset import ViratDataset
 from ml.models.autoencoder import AsymmetricAutoencoder
+from ml.utils.compression_metrics import raw_video_size_bytes
 
 # ── reproduce the data split ────────────────────────────────────────────────
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -87,19 +87,18 @@ def main():
             res_hat, p_y, y = model(target, training=False)
 
             # ── Size Analysis ───────────────────────────────────────────────
-            # Total bits = -sum(log2(p(y)))
-            total_bits = -torch.sum(torch.log2(p_y + 1e-6)).item()
-            total_bytes = math.ceil(total_bits / 8)
-            
-            # Input size in bytes: Width * Height * 3 channels * 1 byte/chan
-            # Note: Our input tensor is normalized to [0,1], but original is 8-bit.
-            raw_bytes = target.shape[2] * target.shape[3] * 3
+            # Estimated entropy-coded bytes per frame.
+            frame_bits = -torch.sum(torch.log2(p_y + 1e-6), dim=(1, 2, 3))
+            frame_bytes = torch.ceil(frame_bits / 8).cpu().tolist()
+
+            # Raw video baseline: 24-bit RGB/BGR, i.e. 3 bytes per pixel.
+            raw_bytes = raw_video_size_bytes(target.shape[2], target.shape[3])
             
             for b in range(target.shape[0]):
                 stats.append({
                     "type": "I-frame" if is_iframe else "P-frame",
                     "raw_bytes": raw_bytes,
-                    "compressed_bytes": total_bytes,
+                    "compressed_bytes": int(frame_bytes[b]),
                 })
 
             # ── Latent Collection ───────────────────────────────────────────

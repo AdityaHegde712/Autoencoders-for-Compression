@@ -23,7 +23,8 @@ from tqdm import tqdm
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ml.dataset import ViratDataset
-from ml.models.autoencoder import AsymmetricAutoencoder
+from ml.models.autoencoder import AsymmetricAutoencoder, LegacyAsymmetricAutoencoder
+from ml.utils.compression_metrics import compression_ratio_from_bpp
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_PATH   = os.path.join(PROJECT_ROOT, 'data', 'processed_frames')
@@ -51,23 +52,42 @@ def psnr(pred: torch.Tensor, target: torch.Tensor, max_val: float = 1.0) -> floa
     return 10 * math.log10(max_val ** 2 / mse)
 
 
+def infer_latent_channels(state_dict) -> int:
+    return state_dict["bottleneck.log_scale"].shape[1]
+
+
+def load_autoencoder_for_checkpoint(model_path: str, device: torch.device):
+    state_dict = torch.load(model_path, map_location=device)
+    latent_channels = infer_latent_channels(state_dict)
+    uses_legacy_encoder = "encoder.0.weight" in state_dict
+    model_cls = LegacyAsymmetricAutoencoder if uses_legacy_encoder else AsymmetricAutoencoder
+    model = model_cls(in_channels=3, latent_channels=latent_channels).to(device)
+    model.load_state_dict(state_dict)
+    return model, latent_channels, model_cls.__name__
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--run", required=True, help="Path to the run folder (contains best_model.pth)")
+    parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=None,
+        help="Maximum number of test sequences to evaluate. Useful for quick smoke tests.",
+    )
     args = parser.parse_args()
 
     model_path = os.path.join(args.run, "best_model.pth")
     assert os.path.exists(model_path), f"Model not found: {model_path}"
 
     # ── load model ──────────────────────────────────────────────────────────
-    model = AsymmetricAutoencoder(in_channels=3, latent_channels=32).to(DEVICE)
-    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
+    model, latent_channels, model_name = load_autoencoder_for_checkpoint(model_path, DEVICE)
     model.eval()
-    print(f"Loaded model from {model_path}")
+    print(f"Loaded {model_name} from {model_path} (latent_channels={latent_channels})")
 
     # ── test dataset ────────────────────────────────────────────────────────
     test_folders = get_test_folders()
-    dataset      = ViratDataset(DATA_PATH, sequence_len=2, video_folders=test_folders)
+    dataset      = ViratDataset(DATA_PATH, sequence_len=2, video_folders=test_folders, max_samples=args.max_samples)
     loader       = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
     print(f"Test set: {len(test_folders)} videos, {len(dataset)} sequences, {len(loader)} batches")
 
@@ -112,12 +132,14 @@ def main():
     avg_ssim = total_ssim / n_batches
     avg_msssim = total_msssim / n_batches
     avg_bpp  = total_bpp  / n_batches
+    avg_compression_ratio = compression_ratio_from_bpp(avg_bpp)
 
     print("\n" + "=" * 40)
     print(f"  PSNR :  {avg_psnr:.2f} dB")
     print(f"  SSIM :  {avg_ssim:.4f}")
     print(f"  MS-SSIM :  {avg_msssim:.4f}")
     print(f"  BPP  :  {avg_bpp:.4f}")
+    print(f"  Compression ratio vs raw 24-bit video :  {avg_compression_ratio:.2f}:1")
     print("=" * 40)
 
     # Save to results txt alongside the model
@@ -127,6 +149,7 @@ def main():
         f.write(f"SSIM: {avg_ssim:.6f}\n")
         f.write(f"MS-SSIM: {avg_msssim:.6f}\n")
         f.write(f"BPP:  {avg_bpp:.6f}\n")
+        f.write(f"Compression ratio vs raw 24-bit video: {avg_compression_ratio:.6f}:1\n")
     print(f"Results saved to {out_path}")
 
 

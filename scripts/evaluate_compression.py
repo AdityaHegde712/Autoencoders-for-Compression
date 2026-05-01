@@ -18,6 +18,10 @@ import torch
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from ml.models.autoencoder import AsymmetricAutoencoder
+from ml.utils.compression_metrics import (
+    compression_ratio_against_raw_video,
+    raw_video_size_bytes,
+)
 from demo.compression import convert_to_bitstream
 
 
@@ -102,11 +106,20 @@ def main() -> None:
     print(f"Model pass total     : {(t4 - t3) * 1000:.6f}")
     print(f"Total                : {(t4 - t0) * 1000:.6f}")
     print()
+    raw_video_bytes = raw_video_size_bytes(x.shape[2], x.shape[3])
+    compression_ratio = compression_ratio_against_raw_video(
+        len(bitstream),
+        x.shape[2],
+        x.shape[3],
+    )
+
     print(f"Input image size    : {image.nbytes} bytes")
+    print(f"Raw 24-bit frame    : {raw_video_bytes} bytes")
     print(f"Input tensor size   : {x.nbytes} bytes")
     print(f"Latent size         : {y_q.nbytes} bytes")
     print(f"Bitstream size      : {len(bitstream)} bytes")
-    print(f"Bitstream BPP       : {len(bitstream)*8 / (x.shape[2] * x.shape[3] * 3):.2f}")
+    print(f"Bitstream BPP       : {len(bitstream)*8 / (x.shape[2] * x.shape[3]):.2f}")
+    print(f"Compression ratio   : {compression_ratio:.2f}:1 vs raw 24-bit video")
 
 
 
