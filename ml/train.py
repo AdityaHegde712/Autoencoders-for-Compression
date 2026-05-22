@@ -8,32 +8,26 @@ from pytorch_msssim import SSIM
 import os
 import csv
 import datetime
-import sys
 from tqdm import tqdm
 import random
 
-# Ensure the root project directory is in the PYTHONPATH
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from ml.dataset import ViratDataset, get_dataloaders
 from ml.models.autoencoder import AsymmetricAutoencoder
+from ml.utils.constants import DATA_PATH, get_device
 
 # --- 1. CONFIGURATION ---
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_PATH = os.path.join(PROJECT_ROOT, 'data', 'processed_frames')
 BATCH_SIZE     = 32         # Reduced because GOP=10 uses 10x more frames per step
 LEARNING_RATE  = 3e-4
 LAMBDA_BITRATE = 0.02      # Adjusted moderately for the 10-frame temporal window
 LATENT_CHANNELS = 32       # Slimmer bottleneck based on PCA of run *624 in ml/saved
 EPOCHS = 100
-DEVICE         = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+DEVICE         = get_device()
 
 # POC caps — set to None to use the full dataset
-TRAIN_MAX_SAMPLES = 15_000  # 3,000 sequences
-VAL_MAX_SAMPLES   = 3_000  # 600 sequences
+TRAIN_MAX_SAMPLES = 15_000
+VAL_MAX_SAMPLES   = 3_000
 PATIENCE    = 0.1 * EPOCHS
-IFRAME_PROB = 0.10  # This is now controlled by sequence_len (1 I-frame per 10 frames)
-                    # Production target: 1/30 ≈ 0.033 (one I-frame per second at 30fps, GOP=30)
+# I-frame interval is controlled by sequence_len (t == 0 forces first frame as I-frame)
 ALPHA_SSIM      = 0.84         # Distortion weight
 COHERENCE_WEIGHT = 0.05          # Temporal stability weight
 

@@ -9,7 +9,6 @@ Usage:
 """
 import argparse
 import os
-import sys
 import math
 import random
 
@@ -23,28 +22,11 @@ from sklearn.decomposition import PCA
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from ml.dataset import ViratDataset, get_test_folders
+from ml.utils.constants import DATA_PATH, IFRAME_PROB, get_device
+from ml.utils.model_loading import detect_latent_channels, load_model
 
-from ml.dataset import ViratDataset
-from ml.models.autoencoder import AsymmetricAutoencoder
-
-# ── reproduce the data split ────────────────────────────────────────────────
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_PATH   = os.path.join(PROJECT_ROOT, 'data', 'processed_frames')
-TRAIN_SPLIT = 0.75
-VAL_SPLIT   = 0.15
-IFRAME_PROB = 0.10
-DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def get_test_folders():
-    all_folders = [f.path for f in os.scandir(DATA_PATH) if f.is_dir()]
-    random.seed(42)
-    random.shuffle(all_folders)
-    n         = len(all_folders)
-    train_end = int(n * TRAIN_SPLIT)
-    val_end   = train_end + int(n * VAL_SPLIT)
-    return all_folders[val_end:]
+DEVICE      = get_device()
 
 
 def main():
@@ -57,10 +39,9 @@ def main():
     assert os.path.exists(model_path), f"Model not found: {model_path}"
 
     # ── load model ──────────────────────────────────────────────────────────
-    model = AsymmetricAutoencoder(in_channels=3, latent_channels=64).to(DEVICE)
-    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
-    model.eval()
-    print(f"Loaded model from {model_path}")
+    detected_channels = detect_latent_channels(model_path)
+    model = load_model(model_path, detected_channels, DEVICE)
+    print(f"Loaded {type(model).__name__} with {detected_channels} channels from {model_path}")
 
     # ── test dataset ────────────────────────────────────────────────────────
     test_folders = get_test_folders()
@@ -103,9 +84,9 @@ def main():
                 })
 
             # ── Latent Collection ───────────────────────────────────────────
-            # Sample random spatial locations from the y tensor (B, 64, H', W')
-            # y shape: (B, 64, H/8, W/8)
-            y_flat = y.permute(0, 2, 3, 1).reshape(-1, 64).cpu().numpy()
+            # Sample random spatial locations from the y tensor
+            # y shape: (B, C, H', W')
+            y_flat = y.permute(0, 2, 3, 1).reshape(-1, detected_channels).cpu().numpy()
             sampled_idx = np.random.choice(len(y_flat), min(100, len(y_flat)), replace=False)
             latent_vectors.append(y_flat[sampled_idx])
 

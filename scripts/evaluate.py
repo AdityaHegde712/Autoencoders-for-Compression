@@ -13,6 +13,7 @@ import os
 import sys
 import random
 import math
+import time
 
 import torch
 import torch.nn.functional as F
@@ -20,28 +21,13 @@ from torch.utils.data import DataLoader
 from pytorch_msssim import ssim as calc_ssim, ms_ssim as calc_msssim
 from tqdm import tqdm
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from ml.dataset import ViratDataset, get_test_folders
+from ml.utils.constants import DATA_PATH, IFRAME_PROB, get_device
+from ml.utils.model_loading import detect_latent_channels, load_model
 
-from ml.dataset import ViratDataset
-from ml.models.autoencoder import AsymmetricAutoencoder
-
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_PATH   = os.path.join(PROJECT_ROOT, 'data', 'processed_frames')
-TRAIN_SPLIT = 0.75
-VAL_SPLIT   = 0.15
-IFRAME_PROB = 0.10
-BATCH_SIZE  = 16
-DEVICE      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def get_test_folders():
-    all_folders = [f.path for f in os.scandir(DATA_PATH) if f.is_dir()]
-    random.seed(42)
-    random.shuffle(all_folders)
-    n         = len(all_folders)
-    train_end = int(n * TRAIN_SPLIT)
-    val_end   = train_end + int(n * VAL_SPLIT)
-    return all_folders[val_end:]
+BATCH_SIZE  = 8
+TEST_MAX_SAMPLES = 2000
+DEVICE      = get_device()
 
 
 def psnr(pred: torch.Tensor, target: torch.Tensor, max_val: float = 1.0) -> float:
@@ -60,19 +46,21 @@ def main():
     assert os.path.exists(model_path), f"Model not found: {model_path}"
 
     # ── load model ──────────────────────────────────────────────────────────
-    model = AsymmetricAutoencoder(in_channels=3, latent_channels=32).to(DEVICE)
-    model.load_state_dict(torch.load(model_path, map_location=DEVICE))
-    model.eval()
-    print(f"Loaded model from {model_path}")
+    print(f"\n[Step 1] Detecting and loading model...")
+    detected_channels = detect_latent_channels(model_path)
+    model = load_model(model_path, detected_channels, DEVICE)
+    print(f"Loaded {type(model).__name__} with {detected_channels} channels from {model_path}")
 
     # ── test dataset ────────────────────────────────────────────────────────
     test_folders = get_test_folders()
-    dataset      = ViratDataset(DATA_PATH, sequence_len=2, video_folders=test_folders)
+    dataset      = ViratDataset(DATA_PATH, sequence_len=2, video_folders=test_folders, max_samples=TEST_MAX_SAMPLES)
     loader       = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False)
     print(f"Test set: {len(test_folders)} videos, {len(dataset)} sequences, {len(loader)} batches")
 
-    total_psnr, total_ssim, total_msssim, total_bpp = 0.0, 0.0, 0.0, 0.0
+    total_psnr, total_ssim, total_bpp = 0.0, 0.0, 0.0
+    total_comp_ms, total_decomp_ms = 0.0, 0.0
     n_batches = 0
+    total_frames = 0
 
     with torch.no_grad():
         for frames in tqdm(loader, desc="Evaluating"):
@@ -82,7 +70,19 @@ def main():
             is_iframe = random.random() < IFRAME_PROB
             target    = f_curr if is_iframe else (f_curr - f_prev)
 
-            res_hat, p_y, _ = model(target, training=False)
+            # --- Measure Compression (Encoder + Bottleneck) ---
+            comp_start = time.perf_counter()
+            y = model.encoder(target)
+            y_q, p_y = model.bottleneck(y, training=False)
+            comp_end = time.perf_counter()
+
+            # --- Measure Decompression (Decoder) ---
+            decomp_start = time.perf_counter()
+            res_hat = model.decoder(y_q)
+            decomp_end = time.perf_counter()
+
+            comp_ms = (comp_end - comp_start) * 1000
+            decomp_ms = (decomp_end - decomp_start) * 1000
 
             # Reconstruct the full frame for quality metrics
             if is_iframe:
@@ -106,19 +106,30 @@ def main():
             total_ssim += batch_ssim
             total_msssim += batch_msssim
             total_bpp  += batch_bpp
+            total_comp_ms += comp_ms
+            total_decomp_ms += decomp_ms
             n_batches  += 1
+            total_frames += f_curr.shape[0]
 
     avg_psnr = total_psnr / n_batches
     avg_ssim = total_ssim / n_batches
     avg_msssim = total_msssim / n_batches
     avg_bpp  = total_bpp  / n_batches
+    avg_comp_ms = total_comp_ms / total_frames
+    avg_decomp_ms = total_decomp_ms / total_frames
 
-    print("\n" + "=" * 40)
+    print("\n" + "=" * 45)
+    print(f"  QUALITY METRICS")
     print(f"  PSNR :  {avg_psnr:.2f} dB")
     print(f"  SSIM :  {avg_ssim:.4f}")
     print(f"  MS-SSIM :  {avg_msssim:.4f}")
     print(f"  BPP  :  {avg_bpp:.4f}")
-    print("=" * 40)
+    print("-" * 45)
+    print(f"  PERFORMANCE (avg ms per frame)")
+    print(f"  Compression:   {avg_comp_ms:.2f} ms")
+    print(f"  Decompression: {avg_decomp_ms:.2f} ms")
+    print(f"  Total Latency: {avg_comp_ms + avg_decomp_ms:.2f} ms")
+    print("=" * 45)
 
     # Save to results txt alongside the model
     out_path = os.path.join(args.run, "eval_results.txt")

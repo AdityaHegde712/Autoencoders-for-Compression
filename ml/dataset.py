@@ -9,14 +9,7 @@ import glob
 from natsort import natsorted
 from torchvision import transforms
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_PATH = os.path.join(PROJECT_ROOT, 'data', 'processed_frames')
-TRAIN_SPLIT    = 0.75
-VAL_SPLIT      = 0.15
-
-
-# Ensure the root project directory is in the PYTHONPATH
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from ml.utils.constants import PROJECT_ROOT, DATA_PATH, TRAIN_SPLIT, VAL_SPLIT
 
 
 class RandomGlobalOrLocal(torch.nn.Module):
@@ -151,6 +144,22 @@ def get_dataloaders(
     val_loader   = DataLoader(val_dataset,   batch_size=batch_size, shuffle=False)
 
     return train_loader, val_loader
+
+
+def get_test_folders(data_path=None, seed=42):
+    """
+    Return the list of video folder paths reserved for the test split
+    (the last 10% after 75/15 train/val).  Uses the same seeded shuffle
+    as get_dataloaders so splits are consistent.
+    """
+    if data_path is None:
+        data_path = str(DATA_PATH)
+    all_folders = [f.path for f in os.scandir(data_path) if f.is_dir()]
+    random.seed(seed)
+    random.shuffle(all_folders)
+    n = len(all_folders)
+    val_end = int(n * TRAIN_SPLIT) + int(n * VAL_SPLIT)
+    return all_folders[val_end:]
 
 
 if __name__ == "__main__":
